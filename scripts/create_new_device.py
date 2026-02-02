@@ -16,6 +16,8 @@ from tenancy.models import Tenant
 from utilities.exceptions import AbortScript
 
 
+
+
 class CommissionDevice(Script):
     class Meta:
         name = "Commission New Device (Auto IP Allocation)"
@@ -102,22 +104,44 @@ class CommissionDevice(Script):
 
     MGMT_LABEL = "mgmt_subnet"
 
-    def _find_site_prefix_by_tag(self, site: Site, tag_name: str) -> Prefix:
+
+    def _find_site_prefix_by_tag(self, site, tag_name) -> Prefix:
         """
-        Find a prefix at the given site having a tag with name == tag_name.
+        Find a Prefix at the given site having a Tag with name == tag_name.
         If multiple exist, pick the most specific (largest prefix length).
+        NetBox 3.7.x does not have a 'prefix_length' DB field, so we sort in Python.
         """
-        qs = (
-            Prefix.objects.filter(site=site, tags__name=tag_name)
-            .order_by("-prefix_length")  # more specific first
-        )
+        qs = Prefix.objects.filter(site=site, tags__name=tag_name)
+    
         if not qs.exists():
             raise AbortScript(
                 f"No prefix found for site='{site}' with tag='{tag_name}'. "
-                "Ensure the Prefix has Site set and is tagged correctly."
+                "Ensure Prefix.site is set and the Prefix is tagged correctly."
             )
-        # If you prefer a deterministic choice beyond prefix_length, add additional ordering here
-        return qs.first()
+    
+        # Sort by prefix length (most specific first), then by prefix for stability
+        candidates = list(qs)
+        candidates.sort(key=lambda p: (p.prefix.prefixlen, str(p.prefix)), reverse=True)
+    
+        return candidates[0]
+
+
+    # def _find_site_prefix_by_tag(self, site: Site, tag_name: str) -> Prefix:
+    #     """
+    #     Find a prefix at the given site having a tag with name == tag_name.
+    #     If multiple exist, pick the most specific (largest prefix length).
+    #     """
+    #     qs = (
+    #         Prefix.objects.filter(site=site, tags__name=tag_name)
+    #         .order_by("-prefix_length")  # more specific first
+    #     )
+    #     if not qs.exists():
+    #         raise AbortScript(
+    #             f"No prefix found for site='{site}' with tag='{tag_name}'. "
+    #             "Ensure the Prefix has Site set and is tagged correctly."
+    #         )
+    #     # If you prefer a deterministic choice beyond prefix_length, add additional ordering here
+    #     return qs.first()
 
     def _allocate_next_ip(self, prefix: Prefix) -> str:
         """
