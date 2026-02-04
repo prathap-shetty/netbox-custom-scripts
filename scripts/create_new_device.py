@@ -180,9 +180,9 @@ class CommissionDevice(Script):
         return mappings
 
     def _create_cable(self, a_iface: Interface, b_iface: Interface) -> bool:
-        if getattr(a_iface, "cable", None) or getattr(b_iface, "cable", None):
-            self.log_info(
-                f"Skipping (already cabled): {a_iface.device.name}:{a_iface.name} <-> {b_iface.device.name}:{b_iface.name}"
+        if getattr(b_iface, "cable", None):
+            self.log_warning(
+                f"Skipping (B-Side switch port is already in use): {b_iface.device.name}:{b_iface.name}"
             )
             return False
 
