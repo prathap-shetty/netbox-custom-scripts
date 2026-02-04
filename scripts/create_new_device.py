@@ -17,8 +17,9 @@ from dcim.choices import DeviceStatusChoices
 
 from ipam.models import IPAddress, Prefix
 from ipam.choices import IPAddressStatusChoices
-# from dcim.choices import CableStatusChoices
+from django.contrib.contenttypes.models import ContentType
 from dcim.models.cables import CableTermination
+
 
 
 from tenancy.models import Tenant
@@ -199,42 +200,54 @@ class CommissionDevice(Script):
 
 
 
+    def _termination_exists(self, term_obj) -> bool:
+        """
+        Return True if a CableTermination already exists for the given termination object
+        (Interface, FrontPort, RearPort, etc.) using GenericFK fields.
+        """
+        ct = ContentType.objects.get_for_model(term_obj.__class__)
+        return CableTermination.objects.filter(
+            termination_type=ct,
+            termination_id=term_obj.pk
+        ).exists()
+
     def _create_cable(self, a_iface: Interface, b_iface: Interface) -> bool:
         """
-        NetBox 4.4.5: A Cable requires A and B terminations to be defined for validation.
-        In scripts, the safe pattern is:
-          1) Save Cable (no full_clean)
-          2) Create CableTermination for end A and B
+        NetBox 4.4.5-safe cabling:
+        - Can't filter CableTermination by 'termination' directly (GenericFK)
+        - Cable validation requires both ends, so:
+            1) Save Cable WITHOUT full_clean
+            2) Create CableTermination for A and B using termination_type/termination_id
         """
-        # If either interface is already terminated by a cable, skip
-        if CableTermination.objects.filter(termination=a_iface).exists():
+        # Skip if either side already terminated
+        if self._termination_exists(a_iface):
             self.log_info(f"Skipping (A already cabled): {a_iface.device.name}:{a_iface.name}")
             return False
-        if CableTermination.objects.filter(termination=b_iface).exists():
+        if self._termination_exists(b_iface):
             self.log_info(f"Skipping (B already cabled): {b_iface.device.name}:{b_iface.name}")
             return False
-    
-        # 1) Create cable WITHOUT full_clean (it fails until terminations exist)
+
+        # Create cable first (no full_clean yet)
         cable = Cable(status="connected")
         cable.save()
-    
-        # 2) Create terminations
+
+        ct_a = ContentType.objects.get_for_model(a_iface.__class__)
+        ct_b = ContentType.objects.get_for_model(b_iface.__class__)
+
+        # Create terminations explicitly
         CableTermination.objects.create(
             cable=cable,
-            termination=a_iface,
             cable_end="A",
+            termination_type=ct_a,
+            termination_id=a_iface.pk,
         )
         CableTermination.objects.create(
             cable=cable,
-            termination=b_iface,
             cable_end="B",
+            termination_type=ct_b,
+            termination_id=b_iface.pk,
         )
-    
-        # Optional: now that both ends exist, you can validate the completed cable if you want
-        # cable.refresh_from_db()
-        # cable.full_clean()
-        # cable.save()
-    
+
         self.log_success(
             f"Cabled: {a_iface.device.name}:{a_iface.name} <-> "
             f"{b_iface.device.name}:{b_iface.name} (Cable ID: {cable.id})"
