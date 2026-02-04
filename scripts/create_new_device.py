@@ -192,6 +192,26 @@ class CommissionDevice(Script):
         )
         return True
 
+    def _update_b_side_description(self, a_iface: Interface, b_iface: Interface):
+        """
+        Update B-side interface description using format:
+        a-side-devicename-port-id-interface_label
+        """
+        a_device = a_iface.device.name
+        a_port = a_iface.name
+        a_label = (a_iface.label or "").strip()
+
+        desc = f"{a_device}-{a_port}-{a_label}"
+
+        b_iface.description = desc
+        b_iface.full_clean()
+        b_iface.save()
+
+        self.log_success(
+            f"Updated description on {b_iface.device.name}:{b_iface.name} -> '{desc}'"
+        )
+
+
     def run(self, data, commit):
         hostname = self._normalize(data["hostname"])
         site = data["site"]
@@ -313,6 +333,7 @@ class CommissionDevice(Script):
                     )
 
                 if self._create_cable(a_iface, b_iface):
+                    self._update_b_side_description(a_iface, b_iface)
                     created += 1
                 else:
                     skipped += 1
