@@ -404,14 +404,14 @@ class CommissionDevice(Script):
                         f"B-side interface '{b_if_name}' not found on device '{b_dev.name}'. "
                         "Check interface name matches exactly in NetBox."
                     )
-
+                self._update_b_side_description(a_iface, b_iface)
                 if self._create_cable(a_iface, b_iface):
                     #self._update_b_side_description(a_iface, b_iface)
                     created += 1
                 else:
                     skipped += 1
                     
-                self._update_b_side_description(a_iface, b_iface)
+                
 
             self.log_info(f"Patch plan cabling summary: created={created}, skipped={skipped}")
 
