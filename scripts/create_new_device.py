@@ -16,8 +16,8 @@ from dcim.models import Device, DeviceRole, DeviceType, Platform, Site, Interfac
 from dcim.choices import DeviceStatusChoices
 
 from ipam.models import IPAddress, Prefix
-from ipam.choices import IPAddressStatusChoices
-from dcim.choices import CableStatusChoices
+from ipam.choices import IPAddressStatusChoices, CableStatusChoices
+# from dcim.choices import CableStatusChoices
 from dcim.models.cables import CableTermination
 
 
