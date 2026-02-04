@@ -13,7 +13,7 @@ from extras.scripts import Script, StringVar, ObjectVar, ChoiceVar, BooleanVar, 
 from utilities.exceptions import AbortScript
 
 from dcim.models import Device, DeviceRole, DeviceType, Platform, Site, Interface, Cable
-from dcim.choices import DeviceStatusChoices, CableStatusChoices
+from dcim.choices import DeviceStatusChoices
 
 from ipam.models import IPAddress, Prefix
 from ipam.choices import IPAddressStatusChoices
