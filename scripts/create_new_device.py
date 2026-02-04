@@ -397,7 +397,7 @@ class CommissionDevice(Script):
                     )
 
                 if self._create_cable(a_iface, b_iface):
-                    self._update_b_side_description(a_iface, b_iface)
+                    #self._update_b_side_description(a_iface, b_iface)
                     created += 1
                 else:
                     skipped += 1
