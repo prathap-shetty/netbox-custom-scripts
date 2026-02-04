@@ -205,84 +205,21 @@ class CommissionDevice(Script):
         )
         return True
 
-   
 
-
-
-    # def _termination_exists(self, term_obj) -> bool:
-    #     """
-    #     Return True if a CableTermination already exists for the given termination object
-    #     (Interface, FrontPort, RearPort, etc.) using GenericFK fields.
-    #     """
-    #     ct = ContentType.objects.get_for_model(term_obj.__class__)
-    #     return CableTermination.objects.filter(
-    #         termination_type=ct,
-    #         termination_id=term_obj.pk
-    #     ).exists()
-
-    # def _create_cable(self, a_iface: Interface, b_iface: Interface) -> bool:
-    #     """
-    #     NetBox 4.4.5-safe cabling:
-    #     - Can't filter CableTermination by 'termination' directly (GenericFK)
-    #     - Cable validation requires both ends, so:
-    #         1) Save Cable WITHOUT full_clean
-    #         2) Create CableTermination for A and B using termination_type/termination_id
-    #     """
-    #     # Skip if either side already terminated
-    #     if self._termination_exists(a_iface):
-    #         self.log_info(f"Skipping (A already cabled): {a_iface.device.name}:{a_iface.name}")
-    #         return False
-    #     if self._termination_exists(b_iface):
-    #         self.log_info(f"Skipping (B already cabled): {b_iface.device.name}:{b_iface.name}")
-    #         return False
-
-    #     # Create cable first (no full_clean yet)
-    #     cable = Cable(status="connected")
-    #     cable.save()
-
-    #     ct_a = ContentType.objects.get_for_model(a_iface.__class__)
-    #     ct_b = ContentType.objects.get_for_model(b_iface.__class__)
-
-    #     # Create terminations explicitly
-    #     CableTermination.objects.create(
-    #         cable=cable,
-    #         cable_end="A",
-    #         termination_type=ct_a,
-    #         termination_id=a_iface.pk,
-    #     )
-    #     CableTermination.objects.create(
-    #         cable=cable,
-    #         cable_end="B",
-    #         termination_type=ct_b,
-    #         termination_id=b_iface.pk,
-    #     )
-
-    #     self.log_success(
-    #         f"Cabled: {a_iface.device.name}:{a_iface.name} <-> "
-    #         f"{b_iface.device.name}:{b_iface.name} (Cable ID: {cable.id})"
-    #     )
-    #     return True
-
-
-
-    def _update_b_side_description(self, a_iface: Interface, b_iface: Interface):
+    def _set_iface_desc_and_enable(self, iface: Interface, device_name: str, port_name: str, label: str):
         """
-        Update B-side interface description using format:
-        a-side-devicename-port-id-interface_label
+        Set interface enabled=True and description to: <device_name>-<port_name>-<label>
         """
-        a_device = a_iface.device.name
-        a_port = a_iface.name
-        a_label = (a_iface.label or "").strip()
-
-        desc = f"{a_device}-{a_port}-{a_label}"
-
-        b_iface.description = desc
-        b_iface.enabled = True 
-        b_iface.full_clean()
-        b_iface.save()
-
+        label = (label or "").strip()
+        desc = f"{device_name}-{port_name}-{label}"
+    
+        iface.description = desc
+        iface.enabled = True
+        iface.full_clean()
+        iface.save()
+    
         self.log_success(
-            f"Updated description on {b_iface.device.name}:{b_iface.name} -> '{desc}'"
+            f"Updated {iface.device.name}:{iface.name} (enabled=True, description='{desc}')"
         )
 
 
@@ -405,14 +342,28 @@ class CommissionDevice(Script):
                         f"B-side interface '{b_if_name}' not found on device '{b_dev.name}'. "
                         "Check interface name matches exactly in NetBox."
                     )
-                self._update_b_side_description(a_iface, b_iface)
+                a_label = (a_iface.label or "").strip() 
+                # B-side desc = A-device, A-port, A-label
+                self._set_iface_desc_and_enable(
+                    iface=b_iface,
+                    device_name=a_iface.device.name,
+                    port_name=a_iface.name,
+                    label=a_label,
+                )
+            
+                # A-side desc = B-device, B-port, A-label
+                self._set_iface_desc_and_enable(
+                    iface=a_iface,
+                    device_name=b_iface.device.name,
+                    port_name=b_iface.name,
+                    label=a_label,
+                )
+                           
                 if self._create_cable(a_iface, b_iface):
-                    #self._update_b_side_description(a_iface, b_iface)
                     created += 1
                 else:
                     skipped += 1
                     
-                
 
             self.log_info(f"Patch plan cabling summary: created={created}, skipped={skipped}")
 
