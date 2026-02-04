@@ -13,12 +13,12 @@ from extras.scripts import Script, StringVar, ObjectVar, ChoiceVar, BooleanVar, 
 from utilities.exceptions import AbortScript
 
 from dcim.models import Device, DeviceRole, DeviceType, Platform, Site, Interface, Cable
-from dcim.choices import DeviceStatusChoices
+from dcim.choices import DeviceStatusChoices, CableStatusChoices
 
 from ipam.models import IPAddress, Prefix
 from ipam.choices import IPAddressStatusChoices
 # from dcim.choices import CableStatusChoices
-# from dcim.models.cables import CableTermination
+from dcim.models.cables import CableTermination
 
 
 from tenancy.models import Tenant
