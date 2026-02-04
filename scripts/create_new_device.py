@@ -96,13 +96,13 @@ class CommissionDevice(Script):
     # The interface labels you want to drive allocation from
     # (these must match Tag names applied to the Prefix objects)
     SUBNET_LABELS = (
-        "mgmt_subnet",
-        "dmz_a_subnet",
-        "dmz_b_subnet",
-        "rtp_subnet",
+        "idn-mgmt",
+        "idn-dmz-a",
+        "idn-dmz-b",
+        "idn-rtp",
     )
 
-    MGMT_LABEL = "mgmt_subnet"
+    MGMT_LABEL = "idn-mgmt"
 
 
     def _find_site_prefix_by_tag(self, site, tag_name) -> Prefix:
