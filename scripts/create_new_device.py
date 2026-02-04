@@ -342,25 +342,42 @@ class CommissionDevice(Script):
                         f"B-side interface '{b_if_name}' not found on device '{b_dev.name}'. "
                         "Check interface name matches exactly in NetBox."
                     )
-                a_label = (a_iface.label or "").strip() 
-                # B-side desc = A-device, A-port, A-label
-                self._set_iface_desc_and_enable(
-                    iface=b_iface,
-                    device_name=a_iface.device.name,
-                    port_name=a_iface.name,
-                    label=a_label,
-                )
+                # a_label = (a_iface.label or "").strip() 
+                # # B-side desc = A-device, A-port, A-label
+                # self._set_iface_desc_and_enable(
+                #     iface=b_iface,
+                #     device_name=a_iface.device.name,
+                #     port_name=a_iface.name,
+                #     label=a_label,
+                # )
             
-                # A-side desc = B-device, B-port, A-label
-                self._set_iface_desc_and_enable(
-                    iface=a_iface,
-                    device_name=b_iface.device.name,
-                    port_name=b_iface.name,
-                    label=a_label,
-                )
+                # # A-side desc = B-device, B-port, A-label
+                # self._set_iface_desc_and_enable(
+                #     iface=a_iface,
+                #     device_name=b_iface.device.name,
+                #     port_name=b_iface.name,
+                #     label=a_label,
+                # )
                            
-                if self._create_cable(a_iface, b_iface):
+                cable_status = self._create_cable(a_iface, b_iface)
+                if cable_status:
                     created += 1
+                    a_label = (a_iface.label or "").strip() 
+                    # B-side desc = A-device, A-port, A-label
+                    self._set_iface_desc_and_enable(
+                        iface=b_iface,
+                        device_name=a_iface.device.name,
+                        port_name=a_iface.name,
+                        label=a_label,
+                    )
+                
+                    # A-side desc = B-device, B-port, A-label
+                    self._set_iface_desc_and_enable(
+                        iface=a_iface,
+                        device_name=b_iface.device.name,
+                        port_name=b_iface.name,
+                        label=a_label,
+                    )
                 else:
                     skipped += 1
                     
