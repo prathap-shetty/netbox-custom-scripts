@@ -3,16 +3,11 @@
 # NetBox v4.4.5 Custom Script:
 # - Create a new device (interfaces instantiated from DeviceType interface templates)
 # - Allocate the next available IP from a site-scoped Prefix whose Tag name matches the interface label
-#   (e.g. idn-mgmt, idn-dmz-a, idn-dmz-b, idn-rtp)
+#   (idn-mgmt, idn-dmz-a, idn-dmz-b, idn-rtp)
 # - Set idn-mgmt IP as the device primary IPv4
-# - Optionally create cables based on a user-provided patch plan mapping:
+# - Optionally create cables based on a patch plan mapping:
 #     eth0=switch-1:Ethernet1/1
 #     eth1=switch-2:Ethernet1/10
-#
-# Notes:
-# - Prefix selection sorts candidate Prefixes in Python by prefix.prefixlen (no "prefix_length" DB field).
-# - Prefix.get_first_available_ip() is used for "next available IP".
-# - Patch plan uses exact NetBox interface names.
 
 from extras.scripts import Script, StringVar, ObjectVar, ChoiceVar, BooleanVar, TextVar
 from utilities.exceptions import AbortScript
@@ -47,13 +42,8 @@ class CommissionDevice(Script):
             "patch_plan",
         )
 
-    # ----------------------------
-    # Form fields
-    # ----------------------------
-
     hostname = StringVar(
         label="Device hostname",
-        description="Name to assign to the device (must be unique within NetBox)",
         required=True,
     )
 
@@ -75,10 +65,11 @@ class CommissionDevice(Script):
         required=True,
     )
 
+    # NetBox 4.4.x: Device.role is required, so make it required here too.
     role = ObjectVar(
         model=DeviceRole,
-        label="Device Role (optional)",
-        required=False,
+        label="Device Role",
+        required=True,
     )
 
     tenant = ObjectVar(
@@ -96,24 +87,18 @@ class CommissionDevice(Script):
 
     allocate_all_labeled_interfaces = BooleanVar(
         label="Allocate IPs for all labeled interfaces",
-        description=(
-            "If enabled, any interface whose label matches one of the known subnet tags "
-            "will get an IP. If disabled, only idn-mgmt will be allocated."
-        ),
         default=True,
         required=True,
     )
 
     create_cables_from_patch_plan = BooleanVar(
         label="Create cables from patch plan",
-        description="If enabled, creates cables based on the patch_plan mappings.",
         default=False,
         required=True,
     )
 
     enforce_patch_plan_site_match = BooleanVar(
         label="Enforce B-side devices are in selected site",
-        description="If enabled, abort if a referenced B-side device is not in the same site as the new device.",
         default=True,
         required=True,
     )
@@ -126,38 +111,24 @@ class CommissionDevice(Script):
             "  <A_INTERFACE>=<B_DEVICE>:<B_INTERFACE>\n\n"
             "Examples:\n"
             "  eth0=switch-1:Ethernet1/1\n"
-            "  eth1=switch-2:Ethernet1/10\n\n"
-            "Interface names must match EXACT NetBox interface names."
+            "  eth1=switch-2:Ethernet1/10\n"
         ),
     )
 
-    # ----------------------------
-    # Allocation configuration (UPDATED)
-    # ----------------------------
-
+    # Updated tags/labels
     SUBNET_LABELS = (
         "idn-mgmt",
         "idn-dmz-a",
         "idn-dmz-b",
         "idn-rtp",
     )
-
     MGMT_LABEL = "idn-mgmt"
-
-    # ----------------------------
-    # Helpers
-    # ----------------------------
 
     def _normalize(self, s: str) -> str:
         return (s or "").strip()
 
     def _find_site_prefix_by_tag(self, site: Site, tag_name: str) -> Prefix:
-        """
-        Find a Prefix at the given site having a Tag with name == tag_name.
-        If multiple exist, pick the most specific (largest prefix length).
-        """
         qs = Prefix.objects.filter(site=site, tags__name=tag_name)
-
         if not qs.exists():
             raise AbortScript(
                 f"No prefix found for site='{site}' with tag='{tag_name}'. "
@@ -175,11 +146,6 @@ class CommissionDevice(Script):
         return str(ip)
 
     def _parse_patch_plan(self, text: str):
-        """
-        Parse lines like:
-          eth0=switch-1:Ethernet1/1
-        Returns list of tuples: (a_iface_name, b_device_name, b_iface_name)
-        """
         mappings = []
         if not text:
             return mappings
@@ -210,9 +176,6 @@ class CommissionDevice(Script):
         return mappings
 
     def _create_cable(self, a_iface: Interface, b_iface: Interface) -> bool:
-        """
-        Create a cable between two interfaces (if neither is already cabled).
-        """
         if getattr(a_iface, "cable", None) or getattr(b_iface, "cable", None):
             self.log_info(
                 f"Skipping (already cabled): {a_iface.device.name}:{a_iface.name} <-> {b_iface.device.name}:{b_iface.name}"
@@ -229,35 +192,27 @@ class CommissionDevice(Script):
         )
         return True
 
-    # ----------------------------
-    # Main
-    # ----------------------------
-
     def run(self, data, commit):
         hostname = self._normalize(data["hostname"])
         site = data["site"]
         platform = data["platform"]
         device_type = data["device_type"]
-        role = data.get("role")
+        role = data["role"]  # required now
         tenant = data.get("tenant")
         status = data["status"]
 
         allocate_all = data["allocate_all_labeled_interfaces"]
-
         do_cabling = data["create_cables_from_patch_plan"]
         enforce_site_match = data["enforce_patch_plan_site_match"]
         patch_plan_text = data.get("patch_plan")
 
-        # 1) Validate uniqueness
         if Device.objects.filter(name=hostname).exists():
             raise AbortScript(f"Device name '{hostname}' already exists in NetBox.")
 
-        # Dry-run support
         if not commit:
             self.log_info("[DRY-RUN] Would create device, allocate IPs, and optionally create cables.")
             return "Dry-run complete."
 
-        # 2) Create device
         device = Device(
             name=hostname,
             site=site,
@@ -271,7 +226,6 @@ class CommissionDevice(Script):
         device.save()
         self.log_success(f"Created device: {device.name} (site={site}, type={device_type}, platform={platform})")
 
-        # Interfaces should exist (from DeviceType templates)
         interfaces = list(device.interfaces.all())
         if not interfaces:
             raise AbortScript(
@@ -279,7 +233,6 @@ class CommissionDevice(Script):
                 "Check that the Device Type has interface templates defined."
             )
 
-        # 3) Pick target interfaces to allocate based on Interface.label
         target_labels = set(self.SUBNET_LABELS) if allocate_all else {self.MGMT_LABEL}
 
         target_ifaces = []
@@ -290,16 +243,14 @@ class CommissionDevice(Script):
         if not target_ifaces:
             raise AbortScript(
                 "No interfaces matched the required labels. "
-                "Ensure Interface.label on the device matches one of: "
+                "Ensure Interface.label matches one of: "
                 f"{', '.join(sorted(target_labels))}"
             )
 
-        # 4) Allocate IPs per interface label -> tagged prefix
         mgmt_ip_obj = None
 
         for iface in target_ifaces:
             label = iface.label.strip()
-
             prefix = self._find_site_prefix_by_tag(site, label)
             addr = self._allocate_next_ip(prefix)
 
@@ -314,22 +265,19 @@ class CommissionDevice(Script):
             ip_obj.save()
 
             self.log_success(
-                f"Assigned {ip_obj.address} to {device.name} / {iface.name} "
-                f"(label={label}, prefix={prefix.prefix})"
+                f"Assigned {ip_obj.address} to {device.name} / {iface.name} (label={label}, prefix={prefix.prefix})"
             )
 
             if label == self.MGMT_LABEL:
                 mgmt_ip_obj = ip_obj
 
-        # 5) Set primary IPv4 to idn-mgmt
         if mgmt_ip_obj:
             device.primary_ip4 = mgmt_ip_obj
             device.save()
             self.log_success(f"Set primary IPv4 for {device.name} to {mgmt_ip_obj.address}")
         else:
-            self.log_warning(f"No '{self.MGMT_LABEL}' interface was allocated, so primary IPv4 was not set.")
+            self.log_warning(f"No '{self.MGMT_LABEL}' interface allocated; primary IPv4 not set.")
 
-        # 6) Optional cabling from patch plan
         if do_cabling:
             mappings = self._parse_patch_plan(patch_plan_text)
             if not mappings:
