@@ -367,7 +367,7 @@ class CommissionDevice(Script):
                         iface=b_iface,
                         device_name=a_iface.device.name,
                         port_name=a_iface.name,
-                        label=a_lable,
+                        label=a_label,
                     )
             
                 # A-side desc = B-device, B-port, A-label
