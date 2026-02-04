@@ -410,6 +410,8 @@ class CommissionDevice(Script):
                     created += 1
                 else:
                     skipped += 1
+                    
+                self._update_b_side_description(a_iface, b_iface)
 
             self.log_info(f"Patch plan cabling summary: created={created}, skipped={skipped}")
 
