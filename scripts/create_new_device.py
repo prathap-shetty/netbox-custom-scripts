@@ -179,37 +179,54 @@ class CommissionDevice(Script):
         return mappings
 
     def _create_cable(self, a_iface: Interface, b_iface: Interface) -> bool:
-        """
-        Create a cable between two interfaces by explicitly creating CableTermination objects.
-        This is the most reliable approach in NetBox 4.x (ensures both sides show the connection).
-        """
-        # Skip if either side already has a cable
         if getattr(a_iface, "cable", None) or getattr(b_iface, "cable", None):
             self.log_info(
-                f"Skipping (already cabled): {a_iface.device.name}:{a_iface.name} <-> "
-                f"{b_iface.device.name}:{b_iface.name}"
+                f"Skipping (already cabled): {a_iface.device.name}:{a_iface.name} <-> {b_iface.device.name}:{b_iface.name}"
             )
             return False
 
-        # Create cable first
-        cable = Cable(status=CableStatusChoices.STATUS_CONNECTED)
-        cable.full_clean()
-        cable.save()
-
-        # Create terminations (this is the key!)
-        ct_a = CableTermination(cable=cable, termination=a_iface, cable_end="A")
-        ct_a.full_clean()
-        ct_a.save()
-
-        ct_b = CableTermination(cable=cable, termination=b_iface, cable_end="B")
-        ct_b.full_clean()
-        ct_b.save()
-
+        Cable.objects.create(
+            a_terminations=[a_iface],
+            b_terminations=[b_iface],
+            status="connected",
+        )
         self.log_success(
-            f"Cabled: {a_iface.device.name}:{a_iface.name} <-> {b_iface.device.name}:{b_iface.name} "
-            f"(Cable ID: {cable.id})"
+            f"Cabled: {a_iface.device.name}:{a_iface.name} <-> {b_iface.device.name}:{b_iface.name}"
         )
         return True
+
+    # def _create_cable(self, a_iface: Interface, b_iface: Interface) -> bool:
+    #     """
+    #     Create a cable between two interfaces by explicitly creating CableTermination objects.
+    #     This is the most reliable approach in NetBox 4.x (ensures both sides show the connection).
+    #     """
+    #     # Skip if either side already has a cable
+    #     if getattr(a_iface, "cable", None) or getattr(b_iface, "cable", None):
+    #         self.log_info(
+    #             f"Skipping (already cabled): {a_iface.device.name}:{a_iface.name} <-> "
+    #             f"{b_iface.device.name}:{b_iface.name}"
+    #         )
+    #         return False
+
+    #     # Create cable first
+    #     cable = Cable(status=CableStatusChoices.STATUS_CONNECTED)
+    #     cable.full_clean()
+    #     cable.save()
+
+    #     # Create terminations (this is the key!)
+    #     ct_a = CableTermination(cable=cable, termination=a_iface, cable_end="A")
+    #     ct_a.full_clean()
+    #     ct_a.save()
+
+    #     ct_b = CableTermination(cable=cable, termination=b_iface, cable_end="B")
+    #     ct_b.full_clean()
+    #     ct_b.save()
+
+    #     self.log_success(
+    #         f"Cabled: {a_iface.device.name}:{a_iface.name} <-> {b_iface.device.name}:{b_iface.name} "
+    #         f"(Cable ID: {cable.id})"
+    #     )
+    #     return True
 
 
     def _update_b_side_description(self, a_iface: Interface, b_iface: Interface):
