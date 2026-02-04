@@ -19,9 +19,6 @@ from ipam.models import IPAddress, Prefix
 from ipam.choices import IPAddressStatusChoices
 from django.contrib.contenttypes.models import ContentType
 from dcim.models.cables import CableTermination
-
-
-
 from tenancy.models import Tenant
 
 
@@ -205,7 +202,16 @@ class CommissionDevice(Script):
         )
         return True
 
-
+    def _is_interface_cabled(self, iface: Interface) -> bool:
+        """
+        Return True if the interface already has a cable attached.
+        NetBox 4.x requires querying CableTermination via GenericFK fields.
+        """
+        ct = ContentType.objects.get_for_model(iface.__class__)
+        return CableTermination.objects.filter(
+            termination_type=ct,
+            termination_id=iface.pk,
+        ).exists()
     def _set_iface_desc_and_enable(self, iface: Interface, device_name: str, port_name: str, label: str):
         """
         Set interface enabled=True and description to: <device_name>-<port_name>-<label>
@@ -342,44 +348,62 @@ class CommissionDevice(Script):
                         f"B-side interface '{b_if_name}' not found on device '{b_dev.name}'. "
                         "Check interface name matches exactly in NetBox."
                     )
-                # a_label = (a_iface.label or "").strip() 
-                # # B-side desc = A-device, A-port, A-label
+                a_label = (a_iface.label or "").strip() 
+                # B-side desc = A-device, A-port, A-label
                 # self._set_iface_desc_and_enable(
                 #     iface=b_iface,
                 #     device_name=a_iface.device.name,
                 #     port_name=a_iface.name,
                 #     label=a_label,
                 # )
-            
-                # # A-side desc = B-device, B-port, A-label
-                # self._set_iface_desc_and_enable(
-                #     iface=a_iface,
-                #     device_name=b_iface.device.name,
-                #     port_name=b_iface.name,
-                #     label=a_label,
-                # )
-                           
-                cable_status = self._create_cable(a_iface, b_iface)
-                if cable_status:
-                    created += 1
-                    a_label = (a_iface.label or "").strip() 
-                    # B-side desc = A-device, A-port, A-label
+
+                if self._is_interface_cabled(b_iface):
+                    self.log_info(
+                        f"Skipping description update (B-side Port is already in use/cabled): "
+                        f"{b_iface.device.name}:{b_iface.name}"
+                    )
+                else:
                     self._set_iface_desc_and_enable(
                         iface=b_iface,
                         device_name=a_iface.device.name,
                         port_name=a_iface.name,
-                        label=a_label,
+                        label=a_lable,
                     )
-                
-                    # A-side desc = B-device, B-port, A-label
-                    self._set_iface_desc_and_enable(
-                        iface=a_iface,
-                        device_name=b_iface.device.name,
-                        port_name=b_iface.name,
-                        label=a_label,
-                    )
+            
+                # A-side desc = B-device, B-port, A-label
+                self._set_iface_desc_and_enable(
+                    iface=a_iface,
+                    device_name=b_iface.device.name,
+                    port_name=b_iface.name,
+                    label=a_label,
+                )
+
+                if self._create_cable(a_iface, b_iface):
+                    created += 1
                 else:
                     skipped += 1
+                           
+                # cable_status = self._create_cable(a_iface, b_iface)
+                # if cable_status:
+                #     created += 1
+                #     a_label = (a_iface.label or "").strip() 
+                #     # B-side desc = A-device, A-port, A-label
+                #     self._set_iface_desc_and_enable(
+                #         iface=b_iface,
+                #         device_name=a_iface.device.name,
+                #         port_name=a_iface.name,
+                #         label=a_label,
+                #     )
+                
+                #     # A-side desc = B-device, B-port, A-label
+                #     self._set_iface_desc_and_enable(
+                #         iface=a_iface,
+                #         device_name=b_iface.device.name,
+                #         port_name=b_iface.name,
+                #         label=a_label,
+                #     )
+                # else:
+                #     skipped += 1
                     
 
             self.log_info(f"Patch plan cabling summary: created={created}, skipped={skipped}")
