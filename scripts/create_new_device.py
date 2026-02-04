@@ -358,25 +358,25 @@ class CommissionDevice(Script):
                 # )
 
                 if self._is_interface_cabled(b_iface):
-                    self.log_info(
+                    self.log_warning(
                         f"Skipping description update (B-side Port is already in use/cabled): "
                         f"{b_iface.device.name}:{b_iface.name}"
                     )
                 else:
+                    # B-side desc = A-device, A-port, A-label
                     self._set_iface_desc_and_enable(
                         iface=b_iface,
                         device_name=a_iface.device.name,
                         port_name=a_iface.name,
                         label=a_label,
                     )
-            
-                # A-side desc = B-device, B-port, A-label
-                self._set_iface_desc_and_enable(
-                    iface=a_iface,
-                    device_name=b_iface.device.name,
-                    port_name=b_iface.name,
-                    label=a_label,
-                )
+                    # A-side desc = B-device, B-port, A-label
+                    self._set_iface_desc_and_enable(
+                        iface=a_iface,
+                        device_name=b_iface.device.name,
+                        port_name=b_iface.name,
+                        label=a_label,
+                    )
 
                 if self._create_cable(a_iface, b_iface):
                     created += 1
