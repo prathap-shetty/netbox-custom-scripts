@@ -277,6 +277,7 @@ class CommissionDevice(Script):
         desc = f"{a_device}-{a_port}-{a_label}"
 
         b_iface.description = desc
+        b_iface.enabled = True 
         b_iface.full_clean()
         b_iface.save()
 
