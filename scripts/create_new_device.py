@@ -18,7 +18,7 @@ from dcim.choices import DeviceStatusChoices
 from ipam.models import IPAddress, Prefix
 from ipam.choices import IPAddressStatusChoices, CableStatusChoices
 # from dcim.choices import CableStatusChoices
-from dcim.models.cables import CableTermination
+# from dcim.models.cables import CableTermination
 
 
 from tenancy.models import Tenant
