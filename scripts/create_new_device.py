@@ -197,37 +197,44 @@ class CommissionDevice(Script):
 
    
 
+
+
     def _create_cable(self, a_iface: Interface, b_iface: Interface) -> bool:
         """
-        Create a cable between two interfaces by explicitly creating CableTermination objects.
-        This guarantees the cable appears on BOTH A and B sides in NetBox 4.x.
+        NetBox 4.4.5: A Cable requires A and B terminations to be defined for validation.
+        In scripts, the safe pattern is:
+          1) Save Cable (no full_clean)
+          2) Create CableTermination for end A and B
         """
-        # Skip if either side already has a cable
-        if getattr(a_iface, "cable", None) or getattr(b_iface, "cable", None):
-            self.log_info(
-                f"Skipping (already cabled): {a_iface.device.name}:{a_iface.name} <-> "
-                f"{b_iface.device.name}:{b_iface.name}"
-            )
+        # If either interface is already terminated by a cable, skip
+        if CableTermination.objects.filter(termination=a_iface).exists():
+            self.log_info(f"Skipping (A already cabled): {a_iface.device.name}:{a_iface.name}")
             return False
-
-        # Create cable
+        if CableTermination.objects.filter(termination=b_iface).exists():
+            self.log_info(f"Skipping (B already cabled): {b_iface.device.name}:{b_iface.name}")
+            return False
+    
+        # 1) Create cable WITHOUT full_clean (it fails until terminations exist)
         cable = Cable(status="connected")
-        cable.full_clean()
         cable.save()
-
-        # Create terminations explicitly (THIS is the key part)
+    
+        # 2) Create terminations
         CableTermination.objects.create(
             cable=cable,
             termination=a_iface,
             cable_end="A",
         )
-
         CableTermination.objects.create(
             cable=cable,
             termination=b_iface,
             cable_end="B",
         )
-
+    
+        # Optional: now that both ends exist, you can validate the completed cable if you want
+        # cable.refresh_from_db()
+        # cable.full_clean()
+        # cable.save()
+    
         self.log_success(
             f"Cabled: {a_iface.device.name}:{a_iface.name} <-> "
             f"{b_iface.device.name}:{b_iface.name} (Cable ID: {cable.id})"
