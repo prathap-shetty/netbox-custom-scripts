@@ -191,15 +191,15 @@ class CommissionDevice(Script):
             b_terminations=[b_iface],
             status="connected",
         )
-        a_device = a_iface.device.name
-        a_port = a_iface.name
-        a_label = (a_iface.label or "").strip()
+        # a_device = a_iface.device.name
+        # a_port = a_iface.name
+        # a_label = (a_iface.label or "").strip()
 
-        desc = f"{a_device}-{a_port}-{a_label}"
+        # desc = f"{a_device}-{a_port}-{a_label}"
 
-        b_iface.description = desc
-        b_iface.full_clean()
-        b_iface.save()
+        # b_iface.description = desc
+        # b_iface.full_clean()
+        # b_iface.save()
         self.log_success(
             f"Cabled: {a_iface.device.name}:{a_iface.name} <-> {b_iface.device.name}:{b_iface.name}"
         )
