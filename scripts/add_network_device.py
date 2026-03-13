@@ -39,7 +39,7 @@ import re
 RACK_FACE_CHOICES = (
     ("front", "Front"),
     ("rear", "Rear"),
-)
+ )
 
 
 class CommissionDevice(Script):
@@ -136,7 +136,7 @@ class CommissionDevice(Script):
     rack_face = ChoiceVar(
         label="Rack Face",
         choices=RACK_FACE_CHOICES,
-        default=RackFaceChoices.FACE_FRONT,
+        default="front",
         required=True,
     )
 
