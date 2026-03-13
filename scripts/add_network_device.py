@@ -56,7 +56,7 @@ class CommissionDevice(Script):
             "platform",
             "status",
             "rack",
-            "rack_face",
+            # "rack_face",
             "rack_position",
             "allocate_all_labeled_interfaces",
             "create_cables_from_patch_plan",
@@ -431,19 +431,22 @@ class CommissionDevice(Script):
                     )
 
                 device.rack = rack
-                device.face = rack_face
+                # device.face = rack_face
 
                 if rack_position:
                     device.position = rack_position
                     # Validate explicit placement
                     device.full_clean()
                     device.save()
+                    # self.log_success(
+                    #     f"Placed device in rack {rack} face={rack_face} U={rack_position}"
+                    # )
                     self.log_success(
-                        f"Placed device in rack {rack} face={rack_face} U={rack_position}"
-                    )
+                        f"Placed device in rack {rack}  U={rack_position}"
+                     )
                 else:
                     # Try to auto-place by probing available positions
-                    self._auto_place_in_rack(device, rack, rack_face)
+                    self._auto_place_in_rack(device, rack)
 
             # Discover newly-instantiated interfaces
             interfaces = list(device.interfaces.all())
