@@ -23,6 +23,7 @@ from dcim.models import (
     Cable,
     Rack,
     Region,
+    ModuleBay,
 )
 from dcim.choices import DeviceStatusChoices # RackFaceChoices
 from dcim.models.cables import CableTermination
@@ -40,6 +41,18 @@ RACK_FACE_CHOICES = (
     ("front", "Front"),
     ("rear", "Rear"),
  )
+
+# Device-type-specific bay plans
+# Keys match DeviceType.model exactly (case sensitive as stored in NetBox)
+MODULE_BAY_PLANS = {
+    "N9K-C9364D-GX2A": {
+        "name_prefix": "QSFP-DD - port ",
+        "start": 1,
+        "end": 64,   # inclusive
+        # optional: "position_format": "{i}"  # defaults to "{i}"
+    },
+    # Add more models here as needed
+}
 
 
 class CommissionDevice(Script):
@@ -204,6 +217,47 @@ class CommissionDevice(Script):
     #
     # --- Helpers ---
     #
+    def _create_module_bays_for_device(self, device: Device) -> int:
+        """
+        Create module bays on a device based on its DeviceType.model using MODULE_BAY_PLANS.
+        Idempotent: existing bays with the same name are skipped.
+        Returns the number of bays created.
+        """
+        plan = MODULE_BAY_PLANS.get(device.device_type.model)
+        if not plan:
+            self.log_info(f"No module-bay plan for device type '{device.device_type.model}'; skipping.")
+            return 0
+    
+        created = 0
+        prefix = plan["name_prefix"]
+        start = int(plan["start"])
+        end = int(plan["end"])
+        pos_fmt = plan.get("position_format", "{i}")
+    
+        # Build a set of existing names for fast lookups
+        existing = set(device.modulebays.values_list("name", flat=True))
+    
+        for i in range(start, end + 1):
+            name = f"{prefix}{i}"
+            if name in existing:
+                continue
+    
+            mb = ModuleBay(
+                device=device,
+                name=name,
+                position=pos_fmt.format(i=i),  # numeric/string OK
+                # label=name,  # uncomment if you also want label filled
+            )
+            mb.full_clean()
+            mb.save()
+            created += 1
+    
+        if created:
+            self.log_success(f"Created {created} module bays on {device.name} (type={device.device_type.model}).")
+        else:
+            self.log_info(f"All module bays for plan already exist on {device.name}; nothing to create.")
+    
+        return created
 
     def _normalize(self, s: str) -> str:
         return (s or "").strip()
@@ -359,7 +413,10 @@ class CommissionDevice(Script):
             try:
                 device.full_clean()
                 device.save()
-                self.log_success(f"Auto-placed device at {rack} face={face} U={pos} (height={height}U)")
+                self.log_success(f"Auto-placed device at {rack} face={face} U={pos} (height={height}U)")                
+                # Create module bays per device type (if a plan exists)
+                self._create_module_bays_for_device(device)
+
                 return
             except ValidationError:
                 continue
