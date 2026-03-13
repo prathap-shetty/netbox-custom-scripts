@@ -24,7 +24,7 @@ from dcim.models import (
     Rack,
     Region,
 )
-from dcim.choices import DeviceStatusChoices, RackFaceChoices
+from dcim.choices import DeviceStatusChoices # RackFaceChoices
 from dcim.models.cables import CableTermination
 
 from ipam.models import IPAddress, Prefix
@@ -127,12 +127,12 @@ class CommissionDevice(Script):
         query_params={"site_id": "$site"},
     )
 
-    rack_face = ChoiceVar(
-        label="Rack Face",
-        choices=RackFaceChoices,
-        default=RackFaceChoices.FACE_FRONT,
-        required=True,
-    )
+    # rack_face = ChoiceVar(
+    #     label="Rack Face",
+    #     choices=RackFaceChoices,
+    #     default=RackFaceChoices.FACE_FRONT,
+    #     required=True,
+    # )
 
     rack_position = IntegerVar(
         label="Rack Position (U; optional)",
@@ -376,7 +376,7 @@ class CommissionDevice(Script):
         status = data["status"]
 
         rack = data.get("rack")
-        rack_face = data["rack_face"]
+        # rack_face = data["rack_face"]
         rack_position = data.get("rack_position")
 
         device_id = self._normalize(data["device_id"])
