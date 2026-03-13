@@ -413,10 +413,7 @@ class CommissionDevice(Script):
             try:
                 device.full_clean()
                 device.save()
-                self.log_success(f"Auto-placed device at {rack} face={face} U={pos} (height={height}U)")                
-                # Create module bays per device type (if a plan exists)
-                self._create_module_bays_for_device(device)
-
+                self.log_success(f"Auto-placed device at {rack} face={face} U={pos} (height={height}U)")             
                 return
             except ValidationError:
                 continue
@@ -485,6 +482,8 @@ class CommissionDevice(Script):
             self.log_success(
                 f"Created device: {device.name} (site={site}, type={device_type}, role={role}, asset_tag={device_id})"
             )
+            # Create module bays per device type (if a plan exists)
+            self._create_module_bays_for_device(device)
 
             # Optional rack placement
             if rack:
