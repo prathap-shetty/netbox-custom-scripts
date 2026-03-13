@@ -36,6 +36,12 @@ import ipaddress
 import re
 
 
+RACK_FACE_CHOICES = (
+    ("front", "Front"),
+    ("rear", "Rear"),
+)
+
+
 class CommissionDevice(Script):
     class Meta:
         name = "Commission New Device (v4.4.5) – Create, Address, Cable"
@@ -56,7 +62,7 @@ class CommissionDevice(Script):
             "platform",
             "status",
             "rack",
-            # "rack_face",
+            "rack_face",
             "rack_position",
             "allocate_all_labeled_interfaces",
             "create_cables_from_patch_plan",
@@ -127,12 +133,12 @@ class CommissionDevice(Script):
         query_params={"site_id": "$site"},
     )
 
-    # rack_face = ChoiceVar(
-    #     label="Rack Face",
-    #     choices=RackFaceChoices,
-    #     default=RackFaceChoices.FACE_FRONT,
-    #     required=True,
-    # )
+    rack_face = ChoiceVar(
+        label="Rack Face",
+        choices=RACK_FACE_CHOICES,
+        default=RackFaceChoices.FACE_FRONT,
+        required=True,
+    )
 
     rack_position = IntegerVar(
         label="Rack Position (U; optional)",
@@ -376,7 +382,7 @@ class CommissionDevice(Script):
         status = data["status"]
 
         rack = data.get("rack")
-        # rack_face = data["rack_face"]
+        rack_face = data["rack_face"]
         rack_position = data.get("rack_position")
 
         device_id = self._normalize(data["device_id"])
@@ -431,22 +437,22 @@ class CommissionDevice(Script):
                     )
 
                 device.rack = rack
-                # device.face = rack_face
+                device.face = rack_face
 
                 if rack_position:
                     device.position = rack_position
                     # Validate explicit placement
                     device.full_clean()
                     device.save()
-                    # self.log_success(
-                    #     f"Placed device in rack {rack} face={rack_face} U={rack_position}"
-                    # )
                     self.log_success(
-                        f"Placed device in rack {rack}  U={rack_position}"
-                     )
+                        f"Placed device in rack {rack} face={rack_face} U={rack_position}"
+                    )
+                    # self.log_success(
+                    #     f"Placed device in rack {rack}  U={rack_position}"
+                    #  )
                 else:
                     # Try to auto-place by probing available positions
-                    self._auto_place_in_rack(device, rack)
+                    self._auto_place_in_rack(device,rack_face, rack)
 
             # Discover newly-instantiated interfaces
             interfaces = list(device.interfaces.all())
