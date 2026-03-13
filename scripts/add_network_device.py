@@ -483,7 +483,7 @@ class CommissionDevice(Script):
                 f"Created device: {device.name} (site={site}, type={device_type}, role={role}, asset_tag={device_id})"
             )
             # Create module bays per device type (if a plan exists)
-            self._create_module_bays_for_device(device)
+            # self._create_module_bays_for_device(device)
 
             # Optional rack placement
             if rack:
