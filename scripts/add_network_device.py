@@ -35,7 +35,8 @@ from tenancy.models import Tenant
 
 import ipaddress
 import re
-
+import os
+import pynetbox
 
 RACK_FACE_CHOICES = (
     ("front", "Front"),
@@ -322,49 +323,29 @@ class CommissionDevice(Script):
 
  
 
-    def _allocate_next_child_31(self, parent: Prefix) -> Prefix:
-        """
-        Manually allocate the next available /31 inside `parent`,
-        since NetBox 4.4 no longer supports get_first_available_prefix(length).
-        """
+
+
+    def _allocate_next_child_31(self, parent):
+        token = os.getenv("NETBOX_API_TOKEN")
+        if not token:
+            raise AbortScript("Missing NETBOX_API_TOKEN environment variable")
     
-        parent_net = ipaddress.ip_network(str(parent.prefix))
-        desired_length = 31
-    
-        # Generate all possible /31s inside the parent prefix
-        all_children = list(parent_net.subnets(new_prefix=desired_length))
-    
-        # Fetch existing child prefixes from DB
-        existing = set(
-            str(p.prefix)
-            for p in Prefix.objects.filter(
-                prefix__net_contained_or_equal=parent.prefix,
-                prefix__prefix_length=desired_length,
-                site=parent.site
-            )
+        nb = pynetbox.api(
+            os.getenv("NETBOX_URL", "https://192.168.0.105:8443"),
+            token=token,
         )
+        nb.http_session.verify = False
     
-        # Find the first unused /31
-        for candidate in all_children:
-            cand_str = str(candidate)
-            if cand_str not in existing:
-                # Create the new child prefix
-                child = Prefix(
-                    prefix=cand_str,
-                    site=parent.site,
-                    vrf=parent.vrf,
-                    tenant=parent.tenant,
-                    status=parent.status,
-                    role=parent.role,
-                    is_pool=False,
-                    description=f"Allocated automatically under {parent.prefix} (script)",
-                )
-                child.full_clean()
-                child.save()
-                return child
+        parent_api = nb.ipam.prefixes.get(parent.id)
+        new = parent_api.available_prefixes.create({
+            "prefix_length": 31,
+            "description": f"Allocated under {parent.prefix}",
+            "site": parent.site.id,
+            "vrf": parent.vrf.id if parent.vrf else None,
+            "tenant": parent.tenant.id if parent.tenant else None,
+        })
     
-        # No free /31s left
-        raise AbortScript(f"No available /31 prefixes left in parent {parent.prefix}")
+        return Prefix.objects.get(id=new.id)
     
 
     def _parse_patch_plan(self, text: str):
