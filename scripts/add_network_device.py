@@ -297,28 +297,75 @@ class CommissionDevice(Script):
             raise AbortScript(f"No available IPs left in prefix {prefix.prefix}.")
         return str(ip)
 
+    # def _allocate_next_child_31(self, parent: Prefix) -> Prefix:
+    #     """
+    #     Allocate the next available /31 child Prefix under `parent`.
+    #     Returns the newly-created child Prefix object.
+    #     """
+    #     child_cidr = parent.get_first_available_prefix(31)
+    #     if not child_cidr:
+    #         raise AbortScript(f"No available /31 child prefixes left in {parent.prefix}.")
+
+    #     child = Prefix(
+    #         prefix=str(child_cidr),
+    #         site=parent.site,
+    #         vrf=parent.vrf,
+    #         tenant=parent.tenant,
+    #         status=parent.status,
+    #         role=parent.role,
+    #         is_pool=False,
+    #         description=f"Allocated by Script under {parent.prefix} (tag-matched)",
+    #     )
+    #     child.full_clean()
+    #     child.save()
+    #     return child
+
+ 
+
     def _allocate_next_child_31(self, parent: Prefix) -> Prefix:
         """
-        Allocate the next available /31 child Prefix under `parent`.
-        Returns the newly-created child Prefix object.
+        Manually allocate the next available /31 inside `parent`,
+        since NetBox 4.4 no longer supports get_first_available_prefix(length).
         """
-        child_cidr = parent.get_first_available_prefix(31)
-        if not child_cidr:
-            raise AbortScript(f"No available /31 child prefixes left in {parent.prefix}.")
-
-        child = Prefix(
-            prefix=str(child_cidr),
-            site=parent.site,
-            vrf=parent.vrf,
-            tenant=parent.tenant,
-            status=parent.status,
-            role=parent.role,
-            is_pool=False,
-            description=f"Allocated by Script under {parent.prefix} (tag-matched)",
+    
+        parent_net = ipaddress.ip_network(str(parent.prefix))
+        desired_length = 31
+    
+        # Generate all possible /31s inside the parent prefix
+        all_children = list(parent_net.subnets(new_prefix=desired_length))
+    
+        # Fetch existing child prefixes from DB
+        existing = set(
+            str(p.prefix)
+            for p in Prefix.objects.filter(
+                prefix__net_contained_or_equal=parent.prefix,
+                prefix__prefix_length=desired_length,
+                site=parent.site
+            )
         )
-        child.full_clean()
-        child.save()
-        return child
+    
+        # Find the first unused /31
+        for candidate in all_children:
+            cand_str = str(candidate)
+            if cand_str not in existing:
+                # Create the new child prefix
+                child = Prefix(
+                    prefix=cand_str,
+                    site=parent.site,
+                    vrf=parent.vrf,
+                    tenant=parent.tenant,
+                    status=parent.status,
+                    role=parent.role,
+                    is_pool=False,
+                    description=f"Allocated automatically under {parent.prefix} (script)",
+                )
+                child.full_clean()
+                child.save()
+                return child
+    
+        # No free /31s left
+        raise AbortScript(f"No available /31 prefixes left in parent {parent.prefix}")
+    
 
     def _parse_patch_plan(self, text: str):
         mappings = []
