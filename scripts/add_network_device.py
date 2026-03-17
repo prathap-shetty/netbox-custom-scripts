@@ -328,7 +328,7 @@ class CommissionDevice(Script):
     def _allocate_next_child_31(self, parent):
         token = os.getenv("NETBOX_TOKEN")
         if not token:
-            raise AbortScript("Missing NETBOX_API_TOKEN environment variable")
+            raise AbortScript("Missing NETBOX_TOKEN environment variable")
     
         nb = pynetbox.api(
             os.getenv("NETBOX_URL", "https://192.168.0.105:8443"),
