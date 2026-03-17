@@ -320,33 +320,39 @@ class CommissionDevice(Script):
     #     child.full_clean()
     #     child.save()
     #     return child
-
  
-
-
-
-    def _allocate_next_child_31(self, parent):
-        token = os.getenv("NETBOX_TOKEN")
-        if not token:
-            raise AbortScript("Missing NETBOX_TOKEN environment variable")
+    def _safe_id(self, val):
+        if val and hasattr(val, "id"):
+            return val.id
+        return None
+    
+    def _allocate_next_child_31(self, parent: Prefix):
+        import os
+        import pynetbox
     
         nb = pynetbox.api(
             os.getenv("NETBOX_URL", "https://192.168.0.105:8443"),
-            token=token,
+            token=os.getenv("NETBOX_TOKEN")
         )
         nb.http_session.verify = False
     
         parent_api = nb.ipam.prefixes.get(parent.id)
-        new = parent_api.available_prefixes.create({
+        if not parent_api:
+            raise AbortScript(f"Unable to retrieve parent prefix {parent.prefix} ({parent.id})")
+    
+        payload = {
             "prefix_length": 31,
             "description": f"Allocated under {parent.prefix}",
-            "site": parent.site.id,
-            "vrf": parent.vrf.id if parent.vrf else None,
-            "tenant": parent.tenant.id if parent.tenant else None,
-        })
+            "site": self._safe_id(parent.site),
+            "vrf": self._safe_id(parent.vrf),
+            "tenant": self._safe_id(parent.tenant),
+        }
     
-        return Prefix.objects.get(id=new.id)
+        new = parent_api.available_prefixes.create(payload)
+        if not new:
+            raise AbortScript(f"No /31 prefixes available under {parent.prefix}")
     
+        return Prefix.objects.get(id=new.id)    
 
     def _parse_patch_plan(self, text: str):
         mappings = []
