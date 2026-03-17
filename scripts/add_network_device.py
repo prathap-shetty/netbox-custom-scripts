@@ -302,7 +302,7 @@ class CommissionDevice(Script):
         Allocate the next available /31 child Prefix under `parent`.
         Returns the newly-created child Prefix object.
         """
-        child_cidr = parent.get_first_available_prefix(prefix_length=31)
+        child_cidr = parent.get_first_available_prefix(31)
         if not child_cidr:
             raise AbortScript(f"No available /31 child prefixes left in {parent.prefix}.")
 
