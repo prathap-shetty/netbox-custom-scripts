@@ -593,7 +593,7 @@ class CommissionDevice(Script):
                 if label in subnet_31_labels:
                     parent = self._find_site_prefix_by_tag(site, label)
                     child = self._allocate_next_child_31(parent)
-
+                    addr2 = self._allocate_next_ip(child)
                     # First usable IP from the /31 (network + 1)
                     net = ipaddress.ip_network(str(child.prefix))
                     hosts = list(net.hosts())
@@ -603,7 +603,7 @@ class CommissionDevice(Script):
                     first_ip = str(hosts[0])
 
                     ip_obj = IPAddress(
-                        address=first_ip,
+                        address=addr2,
                         vrf=child.vrf,
                         tenant=tenant or child.tenant,
                         status=IPAddressStatusChoices.STATUS_ACTIVE,
