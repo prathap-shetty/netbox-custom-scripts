@@ -77,6 +77,7 @@ class CommissionDevice(Script):
             "region",
             "site",
             "tenant",
+            "network_type",
             "device_id",
             "device_type",
             "role",
