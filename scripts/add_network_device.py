@@ -42,6 +42,13 @@ RACK_FACE_CHOICES = (
     ("front", "Front"),
     ("rear", "Rear"),
  )
+NETWORK_TYPE_CHOICES = (
+    ("otn", "otn"),
+    ("dsn", "dns"),
+    ("omn", "omn"),
+    ("msn", "msn"),
+    ("ops", "ops"),
+ )
 
 # Device-type-specific bay plans
 # Keys match DeviceType.model exactly (case sensitive as stored in NetBox)
@@ -108,9 +115,15 @@ class CommissionDevice(Script):
         required=True,
     )
 
+    network_type = ChoiceVar(
+        choices=NETWORK_TYPE_CHOICES,
+        label="Network Type",
+        required=True,
+    )
+
     # Removed hostname; device name is computed
     device_id = StringVar(
-        label="Device ID (stored as asset_tag and used in the computed name)",
+        label="Device ID (Used in the computed name)",
         required=True,
     )
 
@@ -273,12 +286,13 @@ class CommissionDevice(Script):
         s = re.sub(r"-{2,}", "-", s).strip("-")
         return s or "na"
 
-    def _compose_device_name(self, site: Site, tenant: Tenant, role: DeviceRole, device_id: str) -> str:
+    def _compose_device_name(self, site: Site, tenant: Tenant, network_type: str, role: DeviceRole, device_id: str) -> str:
         site_part = self._slug(site.name)
         tenant_part = self._slug(tenant.name)
+        network_type_part = self._slug(network_type)
         role_part = self._slug(role.name)
         id_part = self._slug(device_id)
-        return f"{site_part}-{tenant_part}-{role_part}-{id_part}"
+        return f"{site_part}-{network_type_part}-{role_part}-{id_part}"
 
     def _find_site_prefix_by_tag(self, site: Site, tag_name: str) -> Prefix:
         qs = Prefix.objects.filter(site=site, tags__name=tag_name)
@@ -468,7 +482,7 @@ class CommissionDevice(Script):
         role = data["role"]
         platform = data.get("platform")
         status = data["status"]
-
+        network_type = data["network_type"]
         rack = data.get("rack")
         rack_face = data["rack_face"]
         rack_position = data.get("rack_position")
@@ -487,7 +501,7 @@ class CommissionDevice(Script):
             )
 
         # Compute device name
-        composed_name = self._compose_device_name(site, tenant, role, device_id)
+        composed_name = self._compose_device_name(site, tenant, network_type, role, device_id)
 
         if Device.objects.filter(name=composed_name).exists():
             raise AbortScript(f"Device name '{composed_name}' already exists in NetBox.")
