@@ -1,4 +1,3 @@
-from dcim.models import Site
 from ipam.models import Prefix
 from extras.scripts import Script, ObjectVar, IntegerVar
 import ipaddress
@@ -8,11 +7,6 @@ class BulkCreateSubnets(Script):
     class Meta:
         name = "Bulk create subnets"
         description = "Create multiple child prefixes from a selected parent prefix"
-        field_order = [
-            "parent_prefix",
-            "child_prefix_length",
-            "subnet_count",
-        ]
 
     parent_prefix = ObjectVar(
         model=Prefix,
@@ -66,15 +60,17 @@ class BulkCreateSubnets(Script):
                 self.log_warning(f"Skipping existing prefix {subnet_str}")
                 continue
 
-            Prefix.objects.create(
+            new_prefix = Prefix.objects.create(
                 prefix=subnet_str,
                 parent=parent,
-                site=parent.site,
                 vrf=parent.vrf,
                 tenant=parent.tenant,
                 status=parent.status,
                 description=f"Auto-created from {parent.prefix}",
             )
+
+            # ✅ NetBox 4.x: sites is M2M
+            new_prefix.sites.set(parent.sites.all())
 
             self.log_success(f"Created subnet {subnet_str}")
             created += 1
