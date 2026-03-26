@@ -64,9 +64,9 @@ class BulkCreateSubnets(Script):
                 description=f"Auto-created from {parent.prefix}",
             )
 
-            # Assign site via .set() after creation
-            if parent.site:
-                new_prefix.site.set([parent.site])
+            # Assign sites via .set() after creation
+            if parent.site.exists():
+                new_prefix.site.set(parent.site.all())
 
             self.log_success(f"Created subnet {subnet_str}")
             created += 1
