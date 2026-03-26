@@ -41,7 +41,7 @@ class GenerateVxlanFabricAddressing(Script):
             SEGMENT_ID = NETWORK_ID // block_size
 
         # --- Fabric values ---
-        multicast_group = f"239.0.0.{VRF_ID}"
+        multicast_group = f"239.0.{SEGMENT_ID}.{VRF_ID}"
 
         l3_vni_vlan = VRF_ID
         l3_vni = f"{VRF_ID:04d}0000"
