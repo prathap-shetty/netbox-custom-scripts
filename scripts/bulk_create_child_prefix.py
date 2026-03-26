@@ -60,7 +60,7 @@ class BulkCreateSubnets(Script):
                     prefix=subnet_str,
                     vrf=parent.vrf,
                     tenant=parent.tenant,
-                    status=parent.status,
+                    # status= "", # parent.status
                     scope=parent.scope,        # use whatever the debug output shows
                     description=f"Auto-created from {parent.prefix}",
                 )
