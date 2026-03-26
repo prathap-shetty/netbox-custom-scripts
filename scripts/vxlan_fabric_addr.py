@@ -1,6 +1,5 @@
-from extras.scripts import Script
+from extras.scripts import Script, ObjectVar
 from ipam.models import Prefix
-from django.utils.text import slugify
 import ipaddress
 
 
@@ -8,34 +7,40 @@ class GenerateVxlanFabricAddressing(Script):
 
     class Meta:
         name = "Generate VXLAN Fabric Addressing"
-        description = "Generate VXLAN/VLAN values from a workload subnet"
+        description = "Generate VXLAN Fabric values from a selected IPAM workload subnet"
         field_order = ["workload_prefix"]
 
-    workload_prefix = Prefix.objects.all()
+    # ✅ IPAM prefix selector
+    workload_prefix = ObjectVar(
+        model=Prefix,
+        description="Select the workload subnet from IPAM"
+    )
 
     def run(self, data, commit):
 
         prefix = data["workload_prefix"]
         network = ipaddress.ip_network(prefix.prefix)
 
-        # --- Extract subnet components ---
+        # --- Extract address components ---
         octets = str(network.network_address).split(".")
-        SUBNET_ID = int(octets[2])       # 3rd octet
+        SUBNET_ID = int(octets[2])
         VRF_ID = SUBNET_ID
 
-        prefix_length = network.prefixlen
+        prefix_len = network.prefixlen
 
-        # --- Segment logic ---
-        if prefix_length == 24:
+        # --- Segment calculation ---
+        if prefix_len == 24:
             SEGMENT_ID = 0
             NETWORK_ID = 0
         else:
+            full_24 = ipaddress.ip_network(
+                f"{octets[0]}.{octets[1]}.{octets[2]}.0/24"
+            )
             block_size = network.num_addresses
-            full_24 = ipaddress.ip_network(f"{octets[0]}.{octets[1]}.{octets[2]}.0/24")
             NETWORK_ID = int(network.network_address) - int(full_24.network_address)
             SEGMENT_ID = NETWORK_ID // block_size
 
-        # --- Addressing outputs ---
+        # --- Fabric values ---
         multicast_group = f"239.0.0.{VRF_ID}"
 
         l3_vni_vlan = VRF_ID
@@ -48,13 +53,13 @@ class GenerateVxlanFabricAddressing(Script):
 
         # --- Output ---
         self.log_success("VXLAN Fabric Addressing Generated")
-        self.log_info(f"IP Subnet         : {network}")
-        self.log_info(f"Multicast Group  : {multicast_group}")
-        self.log_info(f"L3 VNI VLAN      : {l3_vni_vlan}")
-        self.log_info(f"L3 VNI           : {l3_vni}")
-        self.log_info(f"Workload VLAN    : {workload_vlan}")
-        self.log_info(f"Workload VNI     : {workload_vni}")
-        self.log_info(f"FW Transit VLAN  : {fw_transit_vlan}")
+        self.log_info(f"Subnet            : {network}")
+        self.log_info(f"Multicast Group   : {multicast_group}")
+        self.log_info(f"L3 VNI VLAN       : {l3_vni_vlan}")
+        self.log_info(f"L3 VNI            : {l3_vni}")
+        self.log_info(f"Workload VLAN     : {workload_vlan}")
+        self.log_info(f"Workload VNI      : {workload_vni}")
+        self.log_info(f"FW Transit VLAN   : {fw_transit_vlan}")
 
         return {
             "Subnet": str(network),
@@ -65,3 +70,4 @@ class GenerateVxlanFabricAddressing(Script):
             "Workload VNI": workload_vni,
             "FW Transit VLAN": fw_transit_vlan,
         }
+``
