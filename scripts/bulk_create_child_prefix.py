@@ -2,7 +2,6 @@ from ipam.models import Prefix
 from extras.scripts import Script, ObjectVar, IntegerVar
 import ipaddress
 
-
 class BulkCreateSubnets(Script):
     class Meta:
         name = "Bulk create subnets"
@@ -12,20 +11,17 @@ class BulkCreateSubnets(Script):
         model=Prefix,
         description="Select the parent prefix (e.g. 100.86.120.0/23)",
     )
-
     child_prefix_length = IntegerVar(
         description="Child prefix length (e.g. 26 for /26)",
         min_value=1,
         max_value=32,
     )
-
     subnet_count = IntegerVar(
         description="Number of child subnets to create",
         min_value=1,
     )
 
     def run(self, data, commit=True):
-
         parent = data["parent_prefix"]
         child_length = data["child_prefix_length"]
         count = data["subnet_count"]
@@ -35,7 +31,7 @@ class BulkCreateSubnets(Script):
         if child_length <= parent_net.prefixlen:
             self.log_failure(
                 f"Child prefix length must be larger than parent prefix length "
-                f"(/ {parent_net.prefixlen})"
+                f"(/{parent_net.prefixlen})"
             )
             return
 
@@ -49,7 +45,6 @@ class BulkCreateSubnets(Script):
             return
 
         created = 0
-
         for subnet in available_subnets:
             if created >= count:
                 break
@@ -60,14 +55,18 @@ class BulkCreateSubnets(Script):
                 self.log_warning(f"Skipping existing prefix {subnet_str}")
                 continue
 
-            Prefix.objects.create(
+            # Create prefix WITHOUT site first
+            new_prefix = Prefix.objects.create(
                 prefix=subnet_str,
-                site=parent.site,
                 vrf=parent.vrf,
                 tenant=parent.tenant,
                 status=parent.status,
                 description=f"Auto-created from {parent.prefix}",
             )
+
+            # Assign site via .set() after creation
+            if parent.site:
+                new_prefix.site.set([parent.site])
 
             self.log_success(f"Created subnet {subnet_str}")
             created += 1
