@@ -70,4 +70,3 @@ class GenerateVxlanFabricAddressing(Script):
             "Workload VNI": workload_vni,
             "FW Transit VLAN": fw_transit_vlan,
         }
-``
