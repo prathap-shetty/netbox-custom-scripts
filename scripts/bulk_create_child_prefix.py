@@ -60,16 +60,14 @@ class BulkCreateSubnets(Script):
                 self.log_warning(f"Skipping existing prefix {subnet_str}")
                 continue
 
-            new_prefix = Prefix.objects.create(
+            Prefix.objects.create(
                 prefix=subnet_str,
+                site=parent.site,
                 vrf=parent.vrf,
                 tenant=parent.tenant,
                 status=parent.status,
                 description=f"Auto-created from {parent.prefix}",
             )
-
-            # ✅ NetBox 4.x: sites is ManyToMany
-            new_prefix.sites.set(parent.sites.all())
 
             self.log_success(f"Created subnet {subnet_str}")
             created += 1
