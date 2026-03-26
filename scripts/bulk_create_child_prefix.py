@@ -57,12 +57,13 @@ class BulkCreateSubnets(Script):
 
             # Create prefix WITHOUT site first
             new_prefix = Prefix.objects.create(
-                prefix=subnet_str,
-                vrf=parent.vrf,
-                tenant=parent.tenant,
-                status=parent.status,
-                description=f"Auto-created from {parent.prefix}",
-            )
+                    prefix=subnet_str,
+                    vrf=parent.vrf,
+                    tenant=parent.tenant,
+                    status=parent.status,
+                    scope=parent.scope,        # use whatever the debug output shows
+                    description=f"Auto-created from {parent.prefix}",
+                )
 
             # Assign sites via .set() after creation
             if parent.site.exists():
