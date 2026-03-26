@@ -62,14 +62,13 @@ class BulkCreateSubnets(Script):
 
             new_prefix = Prefix.objects.create(
                 prefix=subnet_str,
-                parent=parent,
                 vrf=parent.vrf,
                 tenant=parent.tenant,
                 status=parent.status,
                 description=f"Auto-created from {parent.prefix}",
             )
 
-            # ✅ NetBox 4.x: sites is M2M
+            # ✅ NetBox 4.x: sites is ManyToMany
             new_prefix.sites.set(parent.sites.all())
 
             self.log_success(f"Created subnet {subnet_str}")
