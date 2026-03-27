@@ -77,6 +77,8 @@ from django.utils.text import slugify
 from ipam.models import Prefix
 from vpn.models import L2VPN
 import ipaddress
+from dcim.models import (    
+    Site)
 
 
 class GenerateVxlanFabricAddressing(Script):
@@ -85,7 +87,13 @@ class GenerateVxlanFabricAddressing(Script):
         name = "Generate VXLAN Fabric Addressing"
         description = "Generate VXLAN Fabric values from a selected IPAM workload subnet"
         field_order = ["vxlan_name", "workload_prefix"]
-
+    
+    site = ObjectVar(
+        model=Site,
+        label="Site ",
+        required=True 
+    )
+    
     vxlan_name = StringVar(
         label="VXLAN Name",
         required=True,
@@ -158,6 +166,7 @@ class GenerateVxlanFabricAddressing(Script):
 
         prefix = data["workload_prefix"]
         vxlan_name = data["vxlan_name"]
+        site = data["site"]
         network = ipaddress.ip_network(prefix.prefix)
 
         # --- Extract address components ---
@@ -213,7 +222,7 @@ class GenerateVxlanFabricAddressing(Script):
 
         
         self.update_l2vpn(
-            name=vxlan_name,
+            name=f"{site}-{vxlan_name}",
             identifier=workload_vni,
             status="active",
             vxlan_type="vxlan-evpn",
