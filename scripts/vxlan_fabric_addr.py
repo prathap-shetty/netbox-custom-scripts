@@ -46,13 +46,14 @@ class GenerateVxlanFabricAddressing(Script):
         l3_vni_vlan = VRF_ID
         l3_vni = f"{VRF_ID:04d}0000"
 
-        workload_vlan = (SUBNET_ID * 10) + SEGMENT_ID
+        workload_vlan = f"{SUBNET_ID} + f"{SEGMENT_ID}"
         workload_vni = f"{VRF_ID:04d}{SUBNET_ID:03d}{SEGMENT_ID}"
 
-        fw_transit_vlan = (VRF_ID * 10) + 9
+        fw_transit_vlan = f"{VRF_ID}" + f"9"
 
         # --- Output ---
         self.log_success("VXLAN Fabric Addressing Generated")
+        self.log_info(f"NETWORK_ID ={NETWORK_ID}, SEGMENT_ID = {SEGMENT_ID} ")
         self.log_info(f"Subnet            : {network}")
         self.log_info(f"Multicast Group   : {multicast_group}")
         self.log_info(f"L3 VNI VLAN       : {l3_vni_vlan}")
