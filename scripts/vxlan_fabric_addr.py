@@ -225,7 +225,7 @@ class GenerateVxlanFabricAddressing(Script):
                 "vxlan_mcast_group": multicast_group,
                 "workload_VLAN_ID": workload_vlan,
                 "workload_VNI": workload_vni,
-                "workload_subnet": prefix,
+                "workload_subnet": prefix.pk,
             },
             commit=commit,
         )
