@@ -144,10 +144,10 @@ class GenerateVxlanFabricAddressing(Script):
 
             # Prefix-based custom field
             if cf_name == "workload_subnet" and isinstance(cf_value, Prefix):
-                l2vpn.custom_fields[cf_name] = cf_value
+                l2vpn.custom_field_data[cf_name] = cf_value
                 continue
 
-            l2vpn.custom_fields[cf_name] = cf_value
+            l2vpn.custom_field_data[cf_name] = cf_value
 
         if commit:
             l2vpn.save()
