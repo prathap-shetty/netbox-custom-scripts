@@ -44,7 +44,7 @@ RACK_FACE_CHOICES = (
  )
 NETWORK_TYPE_CHOICES = (
     ("otn", "otn"),
-    ("dsn", "dns"),
+    ("dsn", "dsn"),
     ("omn", "omn"),
     ("msn", "msn"),
     ("ops", "ops"),
