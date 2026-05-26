@@ -23,6 +23,10 @@ class BulkCreateSubnets(Script):
 
     def run(self, data, commit=True):
         parent = data["parent_prefix"]
+        # When triggered via the REST API, ObjectVar arrives as an int PK — resolve it
+        if isinstance(parent, int):
+           parent = Prefix.objects.get(pk=parent)
+
         child_length = data["child_prefix_length"]
         count = data["subnet_count"]
 
