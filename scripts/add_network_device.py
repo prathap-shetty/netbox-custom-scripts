@@ -525,7 +525,7 @@ class CommissionDevice(Script):
                 role=role,
                 platform=platform,
                 status=status,
-               # asset_tag=device_id,  # keep device_id as asset_tag as well
+                asset_tag=composed_name,  # keep device_id as asset_tag as well
             )
             device.full_clean()
             device.save()
