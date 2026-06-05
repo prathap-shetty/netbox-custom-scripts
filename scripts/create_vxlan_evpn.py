@@ -45,7 +45,6 @@ class GenerateVxlanFabricAddressing(Script):
     vrf_name = ObjectVar(
         model=VRF,
         label="VRF Name",
-        required=True,
         description="VRF to associate with this VXLAN (e.g. VRF-1)",
     )
 
@@ -87,6 +86,7 @@ class GenerateVxlanFabricAddressing(Script):
             "workload_vni": 100000 + service_id,
             "fw_transit_vlan": 100 + subnet_id_1 + subnet_id_2,
             "workload_gateway": str(network.network_address + 1),
+           
         }
 
     def get_reused_l3_values(self, existing_l3_vni):
@@ -198,7 +198,7 @@ class GenerateVxlanFabricAddressing(Script):
             f"WORKLOAD_SEGMENT_ID = {values['workload_vlan']}"
         )
         self.log_info(f"Subnet            : {network}")
-        self.log_info(f"VRF Name          : {vrf_name}")
+        self.log_info(f"VRF Name          : {vrf_name.name if vrf_name else 'None'}")
         self.log_info(f"VRF Length        : {values['prefix_len']}")
         self.log_info(f"Multicast Group   : {values['multicast_group']}")
         self.log_info(f"L3 VNI VLAN       : {values['l3_vni_vlan']}")
@@ -211,6 +211,7 @@ class GenerateVxlanFabricAddressing(Script):
         output_data = {
             "VXLAN Service ID": vxlan_serviceid,
             "Subnet": str(network),
+            "VRF Name": vrf_name.name if vrf_name else None,
             "Multicast Group": values["multicast_group"],
             "L3 VNI VLAN": values["l3_vni_vlan"],
             "L3 VNI": values["l3_vni"],
@@ -231,6 +232,7 @@ class GenerateVxlanFabricAddressing(Script):
                 "fw_transit_vlan": values["fw_transit_vlan"],
                 "l3_vlan": values["l3_vni_vlan"],
                 "L3VNI": values["l3_vni"],
+                "vrf_name": vrf_name.name if vrf_name else None,
                 "vxlan_mcast_group": values["multicast_group"],
                 "workload_VLAN_ID": values["workload_vlan"],
                 "workload_VNI": values["workload_vni"],
