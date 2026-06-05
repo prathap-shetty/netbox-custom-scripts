@@ -1,7 +1,6 @@
 from extras.scripts import Script, ObjectVar,StringVar, IntVar
 from django.utils.text import slugify
-from ipam.models import Prefix
-from vrf.models import VRF
+from ipam.models import Prefix, Vrf
 from vpn.models import L2VPN
 import ipaddress
 from dcim.models import (    
@@ -33,7 +32,7 @@ class GenerateVxlanFabricAddressing(Script):
     )
 
     vrf_name = ObjectVar(
-        model=VRF,
+        model=Vrf,
         label="VRF Name",
         required=True,
         description="Name of the VRF to associate with this VXLAN (e.g., VRF-1)"
