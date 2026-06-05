@@ -43,11 +43,11 @@ RACK_FACE_CHOICES = (
     ("rear", "Rear"),
  )
 NETWORK_TYPE_CHOICES = (
-    ("otn", "otn"),
-    ("dsn", "dsn"),
-    ("omn", "omn"),
-    ("msn", "msn"),
-    ("ops", "ops"),
+    ("pod1", "pod1"),
+    ("pod2", "pod2"),
+    ("pod3", "pod3"),
+    ("azA", "azA"),
+    ("azB", "azB"),
  )
 
 # Device-type-specific bay plans
@@ -215,8 +215,9 @@ class CommissionDevice(Script):
     # Interfaces with these labels get a single IP from a site-scoped prefix tagged with the same name
     SINGLE_IP_LABELS = {
         "oob-mgmt",
-        "underlay-loopback1",
-        "underlay-loopback2",
+        "loopback0",
+        "loopback1",
+        "loopback2",
     }
 
     # Interfaces with these labels get a /31 child prefix from a site-scoped prefix tagged with the same name;
