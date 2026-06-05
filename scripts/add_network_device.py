@@ -347,7 +347,7 @@ class CommissionDevice(Script):
         import pynetbox
     
         nb = pynetbox.api(
-            os.getenv("NETBOX_URL", "https://192.168.0.105:8443"),
+            os.getenv("NETBOX_URL", "https://192.168.0.105"),
             token=os.getenv("NETBOX_TOKEN")
         )
         nb.http_session.verify = False
