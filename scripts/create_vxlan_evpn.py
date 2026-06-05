@@ -81,13 +81,12 @@ class GenerateVxlanFabricAddressing(Script):
             "network": network,
             "prefix_len": network.prefixlen,
             "multicast_group": f"239.0.{subnet_id_1}.{subnet_id_2}",
-            "l3_vni_vlan": 2000 + subnet_id_1 + subnet_id_2,
-            "l3_vni": 500000 + service_id,
             "workload_vlan": 1000 + subnet_id_1 + subnet_id_2,
             "workload_vni": 100000 + service_id,
-            "fw_transit_vlan": 100 + subnet_id_1 + subnet_id_2,
             "workload_gateway": str(network.network_address + 1),
-           
+            "new_l3_vni_vlan": 2000 + subnet_id_1 + subnet_id_2,
+            "new_l3_vni": 500000 + service_id,
+            "new_fw_transit_vlan": 100 + subnet_id_1 + subnet_id_2,
         }
 
     def get_reused_l3_values(self, existing_l3_vni):
@@ -140,6 +139,20 @@ class GenerateVxlanFabricAddressing(Script):
                 f"'{service_id_conflict}'. Choose a unique service ID."
             )
 
+    def add_new_l3_values(self, values):
+        values.update(
+            {
+                "l3_vni": values["new_l3_vni"],
+                "l3_vni_vlan": values["new_l3_vni_vlan"],
+                "fw_transit_vlan": values["new_fw_transit_vlan"],
+            }
+        )
+
+    def log_l3_values(self, values):
+        self.log_info(f"L3 VNI VLAN       : {values['l3_vni_vlan']}")
+        self.log_info(f"L3 VNI            : {values['l3_vni']}")
+        self.log_info(f"FW Transit VLAN   : {values['fw_transit_vlan']}")
+
     def create_l2vpn(
         self,
         *,
@@ -178,67 +191,85 @@ class GenerateVxlanFabricAddressing(Script):
         vrf_name = data["vrf_name"]
         site = data["site"]
         reuse_l3_vni = data.get("reuse_l3_vni")
+        has_vrf = vrf_name is not None
+        vxlan_scope = "L3VXLAN" if has_vrf else "L2VXLAN"
 
         values = self.calculate_values(prefix, vxlan_serviceid)
         self.validate_unique_l2_values(vxlan_serviceid, values["workload_vni"])
 
-        if reuse_l3_vni:
+        if reuse_l3_vni and not has_vrf:
+            raise ValueError(
+                "Select a VRF before reusing an existing L3 VNI/RF source."
+            )
+
+        if has_vrf and reuse_l3_vni:
             reused_values = self.get_reused_l3_values(data.get("existing_l3_vni"))
             values.update(reused_values)
             self.log_info(
                 f"Reusing L3 VNI {values['l3_vni']}, L3 VLAN {values['l3_vni_vlan']}, "
                 f"and FW Transit VLAN {values['fw_transit_vlan']}"
             )
+        elif has_vrf:
+            self.add_new_l3_values(values)
 
         network = values["network"]
 
         self.log_success("VXLAN Fabric Addressing Generated")
-        self.log_info(
-            "SERVICE_ID = "
-            f"{vxlan_serviceid}, L3_SEGMENT_ID = {values['l3_vni']}, "
-            f"WORKLOAD_SEGMENT_ID = {values['workload_vlan']}"
-        )
+        self.log_info(f"VXLAN Scope       : {vxlan_scope}")
+        self.log_info(f"SERVICE_ID        : {vxlan_serviceid}")
         self.log_info(f"Subnet            : {network}")
         self.log_info(f"VRF Name          : {vrf_name.name if vrf_name else 'None'}")
         self.log_info(f"VRF Length        : {values['prefix_len']}")
         self.log_info(f"Multicast Group   : {values['multicast_group']}")
-        self.log_info(f"L3 VNI VLAN       : {values['l3_vni_vlan']}")
-        self.log_info(f"L3 VNI            : {values['l3_vni']}")
+        if has_vrf:
+            self.log_l3_values(values)
         self.log_info(f"Workload VLAN     : {values['workload_vlan']}")
         self.log_info(f"Workload VNI      : {values['workload_vni']}")
-        self.log_info(f"FW Transit VLAN   : {values['fw_transit_vlan']}")
         self.log_info(f"Workload Gateway  : {values['workload_gateway']}")
 
         output_data = {
+            "VXLAN Scope": vxlan_scope,
             "VXLAN Service ID": vxlan_serviceid,
             "Subnet": str(network),
             "VRF Name": vrf_name.name if vrf_name else None,
             "Multicast Group": values["multicast_group"],
-            "L3 VNI VLAN": values["l3_vni_vlan"],
-            "L3 VNI": values["l3_vni"],
             "Workload VLAN": values["workload_vlan"],
             "Workload VNI": values["workload_vni"],
-            "FW Transit VLAN": values["fw_transit_vlan"],
             "Workload Gateway": values["workload_gateway"],
-            "Reused L3 VNI/RF": bool(reuse_l3_vni),
+            "Reused L3 VNI/RF": bool(has_vrf and reuse_l3_vni),
         }
 
+        custom_fields = {
+            "vrf_name": vrf_name.name if vrf_name else None,
+            "vxlan_mcast_group": values["multicast_group"],
+            "workload_VLAN_ID": values["workload_vlan"],
+            "workload_VNI": values["workload_vni"],
+            "workload_subnet": prefix.pk,
+            "workload_gateway": values["workload_gateway"],
+        }
+
+        if has_vrf:
+            output_data.update(
+                {
+                    "L3 VNI VLAN": values["l3_vni_vlan"],
+                    "L3 VNI": values["l3_vni"],
+                    "FW Transit VLAN": values["fw_transit_vlan"],
+                }
+            )
+            custom_fields.update(
+                {
+                    "fw_transit_vlan": values["fw_transit_vlan"],
+                    "l3_vlan": values["l3_vni_vlan"],
+                    "L3VNI": values["l3_vni"],
+                }
+            )
+
         self.create_l2vpn(
-            name=f"{site}-{vxlan_name}",
+            name=f"{site}-{vxlan_scope}-{vxlan_name}",
             identifier=values["workload_vni"],
             status="active",
             vxlan_type="vxlan-evpn",
             comments=json.dumps(output_data, indent=2),
-            custom_fields={
-                "fw_transit_vlan": values["fw_transit_vlan"],
-                "l3_vlan": values["l3_vni_vlan"],
-                "L3VNI": values["l3_vni"],
-                "vrf_name": vrf_name.name if vrf_name else None,
-                "vxlan_mcast_group": values["multicast_group"],
-                "workload_VLAN_ID": values["workload_vlan"],
-                "workload_VNI": values["workload_vni"],
-                "workload_subnet": prefix.pk,
-                "workload_gateway": values["workload_gateway"],
-            },
+            custom_fields=custom_fields,
             commit=commit,
         )
