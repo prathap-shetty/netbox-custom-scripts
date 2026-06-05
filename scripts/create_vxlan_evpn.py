@@ -45,6 +45,7 @@ class GenerateVxlanFabricAddressing(Script):
     vrf_name = ObjectVar(
         model=VRF,
         label="VRF Name",
+        required=False,
         description="VRF to associate with this VXLAN (e.g. VRF-1)",
     )
 
