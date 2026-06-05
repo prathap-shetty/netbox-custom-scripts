@@ -3,7 +3,7 @@ import json
 
 from dcim.models import Site
 from django.utils.text import slugify
-from extras.scripts import BooleanVar, IntVar, ObjectVar, Script, StringVar
+from extras.scripts import BooleanVar, IntegerVar, ObjectVar, Script, StringVar
 from ipam.models import Prefix, VRF
 from vpn.models import L2VPN
 
@@ -36,7 +36,7 @@ class GenerateVxlanFabricAddressing(Script):
         required=True,
     )
 
-    vxlan_serviceid = IntVar(
+    vxlan_serviceid = IntegerVar(
         label="VXLAN Service ID",
         required=True,
         description="Numeric service identifier (e.g. 1001)",
