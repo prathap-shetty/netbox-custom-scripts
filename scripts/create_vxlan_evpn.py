@@ -13,7 +13,7 @@ class GenerateVxlanFabricAddressing(Script):
         name = "Create VXLAN-EVPN"
         description = (
             "Generate VXLAN EVPN values for a selected workload prefix and "
-            "create or update an L2VPN instance in NetBox."
+            "create an L2VPN instance in NetBox."
         )
         field_order = [
             "site",
@@ -21,7 +21,7 @@ class GenerateVxlanFabricAddressing(Script):
             "vxlan_serviceid",
             "vrf_name",
             "workload_prefix",
-            "l2_only",
+            "reuse_l3_vni",
             "existing_l3_vni",
         ]
 
@@ -56,18 +56,18 @@ class GenerateVxlanFabricAddressing(Script):
         required=True,
     )
 
-    l2_only = BooleanVar(
-        label="Create L2 VXLAN only",
+    reuse_l3_vni = BooleanVar(
+        label="Reuse existing L3 VNI/RF",
         required=False,
         default=False,
-        description="Reuse L3 VNI values from an existing VXLAN-EVPN record.",
+        description="Reuse L3 VNI, L3 VLAN, and firewall transit VLAN from an existing VXLAN-EVPN record.",
     )
 
     existing_l3_vni = ObjectVar(
         model=L2VPN,
         label="Existing L3 VNI/RF source",
         required=False,
-        description="Required when creating only an L2 VXLAN.",
+        description="Required when reusing L3 VNI/RF values.",
         query_params={"type": "vxlan-evpn"},
     )
 
@@ -92,13 +92,13 @@ class GenerateVxlanFabricAddressing(Script):
     def get_reused_l3_values(self, existing_l3_vni):
         if not existing_l3_vni:
             raise ValueError(
-                "Select an existing L3 VNI/RF source when 'Create L2 VXLAN only' is enabled."
+                "Select an existing L3 VNI/RF source when 'Reuse existing L3 VNI/RF' is enabled."
             )
 
         custom_fields = existing_l3_vni.custom_field_data or {}
         missing_fields = [
             field
-            for field in ("L3VNI", "l3_vlan")
+            for field in ("L3VNI", "l3_vlan", "fw_transit_vlan")
             if custom_fields.get(field) in (None, "")
         ]
 
@@ -110,9 +110,36 @@ class GenerateVxlanFabricAddressing(Script):
         return {
             "l3_vni": custom_fields["L3VNI"],
             "l3_vni_vlan": custom_fields["l3_vlan"],
+            "fw_transit_vlan": custom_fields["fw_transit_vlan"],
         }
 
-    def update_l2vpn(
+    def validate_unique_l2_values(self, service_id, l2_vni):
+        l2_vni_conflict = L2VPN.objects.filter(identifier=l2_vni).first()
+        if l2_vni_conflict:
+            raise ValueError(
+                f"L2 VNI {l2_vni} is already used by L2VPN '{l2_vni_conflict}'. "
+                "Choose a unique VXLAN Service ID."
+            )
+
+        workload_vni_conflict = L2VPN.objects.filter(
+            custom_field_data__workload_VNI=l2_vni
+        ).first()
+        if workload_vni_conflict:
+            raise ValueError(
+                f"L2 VNI {l2_vni} is already recorded on L2VPN '{workload_vni_conflict}'. "
+                "Choose a unique VXLAN Service ID."
+            )
+
+        service_id_conflict = L2VPN.objects.filter(
+            custom_field_data__vxlan_serviceid=service_id
+        ).first()
+        if service_id_conflict:
+            raise ValueError(
+                f"VXLAN Service ID {service_id} is already recorded on L2VPN "
+                f"'{service_id_conflict}'. Choose a unique service ID."
+            )
+
+    def create_l2vpn(
         self,
         *,
         name,
@@ -123,26 +150,14 @@ class GenerateVxlanFabricAddressing(Script):
         custom_fields,
         commit=True,
     ):
-        l2vpn, created = L2VPN.objects.get_or_create(
+        l2vpn = L2VPN(
+            name=name,
+            slug=slugify(name),
             identifier=identifier,
-            defaults={
-                "name": name,
-                "slug": slugify(name),
-                "type": vxlan_type,
-                "status": status,
-            },
+            status=status,
+            type=vxlan_type,
+            comments=comments,
         )
-
-        if created:
-            self.log_success(f"Created L2VPN: {name}")
-        else:
-            self.log_info(f"Updating existing L2VPN: {name}")
-
-        l2vpn.name = name
-        l2vpn.slug = slugify(name)
-        l2vpn.status = status
-        l2vpn.type = vxlan_type
-        l2vpn.comments = comments
 
         l2vpn.custom_field_data = l2vpn.custom_field_data or {}
         for cf_name, cf_value in custom_fields.items():
@@ -152,6 +167,7 @@ class GenerateVxlanFabricAddressing(Script):
             l2vpn.full_clean()
             l2vpn.save()
 
+        self.log_success(f"Created L2VPN: {name}")
         return l2vpn
 
     def run(self, data, commit):
@@ -160,15 +176,17 @@ class GenerateVxlanFabricAddressing(Script):
         vxlan_serviceid = data["vxlan_serviceid"]
         vrf_name = data["vrf_name"]
         site = data["site"]
-        l2_only = data.get("l2_only")
+        reuse_l3_vni = data.get("reuse_l3_vni")
 
         values = self.calculate_values(prefix, vxlan_serviceid)
+        self.validate_unique_l2_values(vxlan_serviceid, values["workload_vni"])
 
-        if l2_only:
+        if reuse_l3_vni:
             reused_values = self.get_reused_l3_values(data.get("existing_l3_vni"))
             values.update(reused_values)
             self.log_info(
-                f"Reusing L3 VNI {values['l3_vni']} and L3 VLAN {values['l3_vni_vlan']}"
+                f"Reusing L3 VNI {values['l3_vni']}, L3 VLAN {values['l3_vni_vlan']}, "
+                f"and FW Transit VLAN {values['fw_transit_vlan']}"
             )
 
         network = values["network"]
@@ -191,6 +209,7 @@ class GenerateVxlanFabricAddressing(Script):
         self.log_info(f"Workload Gateway  : {values['workload_gateway']}")
 
         output_data = {
+            "VXLAN Service ID": vxlan_serviceid,
             "Subnet": str(network),
             "Multicast Group": values["multicast_group"],
             "L3 VNI VLAN": values["l3_vni_vlan"],
@@ -199,10 +218,10 @@ class GenerateVxlanFabricAddressing(Script):
             "Workload VNI": values["workload_vni"],
             "FW Transit VLAN": values["fw_transit_vlan"],
             "Workload Gateway": values["workload_gateway"],
-            "L2 Only": bool(l2_only),
+            "Reused L3 VNI/RF": bool(reuse_l3_vni),
         }
 
-        self.update_l2vpn(
+        self.create_l2vpn(
             name=f"{site}-{vxlan_name}",
             identifier=values["workload_vni"],
             status="active",
