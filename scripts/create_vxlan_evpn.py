@@ -1,6 +1,7 @@
-from extras.scripts import Script, ObjectVar,StringVar
+from extras.scripts import Script, ObjectVar,StringVar, IntVar
 from django.utils.text import slugify
 from ipam.models import Prefix
+from vrf.models import VRF
 from vpn.models import L2VPN
 import ipaddress
 from dcim.models import (    
@@ -10,8 +11,8 @@ from dcim.models import (
 class GenerateVxlanFabricAddressing(Script):
 
     class Meta:
-        name = "Generate VXLAN Fabric Addressing"
-        description = "Generate VXLAN Fabric values from a selected IPAM workload subnet"
+        name = "Create VXLAN-EVPN"
+        description = "Generate VXLAN EVPN values for a selected workload prefix and create an L2VPN instance in NetBox with the calculated values."
         field_order = ["vxlan_name", "workload_prefix"]
     
     site = ObjectVar(
@@ -24,13 +25,37 @@ class GenerateVxlanFabricAddressing(Script):
         label="VXLAN Name",
         required=True,
     )
-    
+    vxlan_serviceid = IntVar(
+        label="VXLAN Service ID",
+        required=True,
+        description="Numeric Service identifier (e.g., 1001)",
+        range=(1000, 9999)
+    )
+
+    vrf_name = ObjectVar(
+        model=VRF,
+        label="VRF Name",
+        required=True,
+        description="Name of the VRF to associate with this VXLAN (e.g., VRF-1)"
+    )
+
     # ✅ IPAM prefix selector
     workload_prefix = ObjectVar(
         model=Prefix,
         description="Select the workload subnet from IPAM",
         required=True,
     )
+
+    def allocate_vni(self, vxlan_serviceid):
+        """
+        Allocate a VNI based on VRF ID, Subnet ID, and Segment ID
+        Format: VRF(4 digits) + Subnet(3 digits) + Segment(2 digits)
+        Example: VRF 1001, Subnet 10, Segment 1 -> VNI 1001001001
+        """
+        return {
+            "l2_vni": 1000000 + vxlan_serviceid,  # Example: Service ID 1001 -> L2 VNI 1001001
+            "l3_vni": 5000000 + vxlan_serviceid,  # Example: Service ID 1001 -> L3 VNI 5001001
+        }
 
     def update_l2vpn(
         self,
@@ -92,49 +117,44 @@ class GenerateVxlanFabricAddressing(Script):
 
         prefix = data["workload_prefix"]
         vxlan_name = data["vxlan_name"]
+        vxlan_serviceid = data["vxlan_serviceid"]
+        vrf_name = data["vrf_name"]
         site = data["site"]
         network = ipaddress.ip_network(prefix.prefix)
 
         # --- Extract address components ---
         octets = str(network.network_address).split(".")
-        SUBNET_ID = int(octets[2])
-        VRF_ID = SUBNET_ID
+        SUBNET_ID_1 = int(octets[2])
+        SUBNET_ID_2 = int(octets[3])
+
+        VRF_ID = vxlan_serviceid
 
         prefix_len = network.prefixlen
 
-        # --- Segment calculation ---
-        if prefix_len == 24:
-            SEGMENT_ID = 0
-            NETWORK_ID = 0
-        else:
-            full_24 = ipaddress.ip_network(
-                f"{octets[0]}.{octets[1]}.{octets[2]}.0/24"
-            )
-            block_size = network.num_addresses
-            NETWORK_ID = int(network.network_address) - int(full_24.network_address)
-            SEGMENT_ID = NETWORK_ID // block_size
-
         # --- Fabric values ---
-        multicast_group = f"239.0.{SEGMENT_ID}.{VRF_ID}"
+        multicast_group = f"239.0.{SUBNET_ID_1}.{SUBNET_ID_2}"
 
-        l3_vni_vlan = VRF_ID
-        l3_vni = f"{VRF_ID:04d}0000"
+        l3_vni_vlan = 2000 + SUBNET_ID_1 + SUBNET_ID_2  # Example: Subnet ID 10 -> VLAN 110
+        l3_vni = 500000 + vxlan_serviceid  # Example: Service ID 1001 -> L3 VNI VLAN 5001001
 
-        workload_vlan = f"{SUBNET_ID}" + f"{SEGMENT_ID}"
-        workload_vni = f"{VRF_ID:04d}{SUBNET_ID:03d}{SEGMENT_ID}"
+        workload_vlan = 1000 + SUBNET_ID_1 + SUBNET_ID_2
+        workload_vni = 100000 + vxlan_serviceid  # Example: Service ID 1001 -> Workload VNI 1001001
 
-        fw_transit_vlan = f"{VRF_ID}" + f"9"
+        fw_transit_vlan = 100 + SUBNET_ID_1 + SUBNET_ID_2
 
         # --- Output ---
         self.log_success("VXLAN Fabric Addressing Generated")
-        self.log_info(f"NETWORK_ID = {NETWORK_ID}, SEGMENT_ID = {SEGMENT_ID}")
+        self.log_info(f"SERVICE_ID = {vxlan_serviceid}}, L3_SEGMENT_ID = {l3_vni}, WORKLOAD_SEGMENT_ID = {workload_vlan}")
         self.log_info(f"Subnet            : {network}")
+        self.log_info(f"VRF Name          : {vrf_name}")
+        self.log_info(f"VRF Length        : {prefix_len}")
         self.log_info(f"Multicast Group   : {multicast_group}")
         self.log_info(f"L3 VNI VLAN       : {l3_vni_vlan}")
         self.log_info(f"L3 VNI            : {l3_vni}")
         self.log_info(f"Workload VLAN     : {workload_vlan}")
         self.log_info(f"Workload VNI      : {workload_vni}")
         self.log_info(f"FW Transit VLAN   : {fw_transit_vlan}")
+        self.log_info(f"Workload Gateway  : {network.network_address + 1}")  # Assuming gateway is the first IP in the subnet
         
         output_data =  {
             "Subnet": str(network),
@@ -144,6 +164,7 @@ class GenerateVxlanFabricAddressing(Script):
             "Workload VLAN": workload_vlan,
             "Workload VNI": workload_vni,
             "FW Transit VLAN": fw_transit_vlan,
+            "workload_gateway": str(network.network_address + 1)  # Assuming gateway is the first IP in the subnet
         }
 
         
@@ -161,6 +182,7 @@ class GenerateVxlanFabricAddressing(Script):
                 "workload_VLAN_ID": workload_vlan,
                 "workload_VNI": workload_vni,
                 "workload_subnet": prefix.pk,
+                "workload_gateway": str(network.network_address + 1)  # Assuming gateway is the first IP in the subnet
             },
             commit=commit,
         )
