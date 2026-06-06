@@ -88,10 +88,10 @@ class GenerateVxlanFabricAddressing(Script):
             "prefix_len": network.prefixlen,
             "multicast_group": f"239.0.{subnet_id_1}.{multicast_last_octet}",
             "workload_vlan": service_id,
-            "workload_vni": 100000 + service_id,
+            "workload_vni": 1000000 + service_id,
             "workload_gateway": str(network.network_address + 1),
             "new_l3_vni_vlan": 1000 + service_id,
-            "new_l3_vni": 500000 + service_id,
+            "new_l3_vni": 5000000 + service_id,
             "new_fw_transit_vlan": 2000 + service_id,
         }
 
