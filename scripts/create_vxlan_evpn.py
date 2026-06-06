@@ -39,7 +39,7 @@ class GenerateVxlanFabricAddressing(Script):
     vxlan_serviceid = IntegerVar(
         label="VXLAN Service ID",
         required=True,
-        description="Numeric service identifier (e.g. 1001)",
+        description="Numeric service identifier from 1000 through 1999.",
     )
 
     vrf_name = ObjectVar(
@@ -76,17 +76,23 @@ class GenerateVxlanFabricAddressing(Script):
         octets = str(network.network_address).split(".")
         subnet_id_1 = int(octets[2])
         subnet_id_2 = int(octets[3])
+        multicast_last_octet = subnet_id_2 + 1
+
+        if multicast_last_octet > 255:
+            raise ValueError(
+                f"Cannot derive multicast group for {network}: fourth octet plus one exceeds 255."
+            )
 
         return {
             "network": network,
             "prefix_len": network.prefixlen,
-            "multicast_group": f"239.0.{subnet_id_1}.{subnet_id_2}",
-            "workload_vlan": 1000 + subnet_id_1 + subnet_id_2,
+            "multicast_group": f"239.0.{subnet_id_1}.{multicast_last_octet}",
+            "workload_vlan": service_id,
             "workload_vni": 100000 + service_id,
             "workload_gateway": str(network.network_address + 1),
-            "new_l3_vni_vlan": 2000 + subnet_id_1 + subnet_id_2,
+            "new_l3_vni_vlan": 1000 + service_id,
             "new_l3_vni": 500000 + service_id,
-            "new_fw_transit_vlan": 100 + subnet_id_1 + subnet_id_2,
+            "new_fw_transit_vlan": 2000 + service_id,
         }
 
     def get_reused_l3_values(self, existing_l3_vni):
@@ -138,6 +144,10 @@ class GenerateVxlanFabricAddressing(Script):
                 f"VXLAN Service ID {service_id} is already recorded on L2VPN "
                 f"'{service_id_conflict}'. Choose a unique service ID."
             )
+
+    def validate_service_id_range(self, service_id):
+        if service_id < 1000 or service_id > 1999:
+            raise ValueError("VXLAN Service ID must be between 1000 and 1999.")
 
     def add_new_l3_values(self, values):
         values.update(
@@ -194,6 +204,7 @@ class GenerateVxlanFabricAddressing(Script):
         has_vrf = vrf_name is not None
         vxlan_scope = "L3VXLAN" if has_vrf else "L2VXLAN"
 
+        self.validate_service_id_range(vxlan_serviceid)
         values = self.calculate_values(prefix, vxlan_serviceid)
         self.validate_unique_l2_values(vxlan_serviceid, values["workload_vni"])
 
