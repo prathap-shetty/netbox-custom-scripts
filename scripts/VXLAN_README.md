@@ -55,9 +55,17 @@ The L3-related fields are written only when a VRF is selected.
 | VXLAN Name | Yes | Used in the created L2VPN name |
 | VXLAN Service ID | Yes | Must be between `1000` and `1999` |
 | VRF Name | No | If omitted, the script creates an L2-only VXLAN record |
-| Workload Prefix | Yes | Used for multicast and gateway calculations |
+| Workload Prefix | Yes | Must be scoped to the selected site |
 | Reuse existing L3 VNI/RF | No | Only valid when a VRF is selected |
 | Existing L3 VNI/RF source | Conditional | Required when reusing L3 values |
+
+## Workload Prefix Scope
+
+The workload prefix must belong to the same site selected in the script input.
+In NetBox, set the prefix scope to the target `Site`.
+
+The script filters the prefix selector by selected site and also validates this
+at runtime before creating the L2VPN.
 
 ## Allocation Rules
 

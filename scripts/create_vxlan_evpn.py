@@ -63,6 +63,7 @@ class GenerateVxlanFabricAddressing(Script):
         label="Workload Prefix",
         description="Select the workload subnet from IPAM",
         required=True,
+        query_params={"scope_type": "dcim.site", "scope_id": "$site"},
     )
 
     reuse_l3_vni = BooleanVar(
@@ -170,6 +171,26 @@ class GenerateVxlanFabricAddressing(Script):
         if service_id < 1000 or service_id > 1999:
             raise ValueError("VXLAN Service ID must be between 1000 and 1999.")
 
+    def validate_prefix_site_scope(self, prefix, site):
+        prefix_scope = getattr(prefix, "scope", None)
+
+        if prefix_scope == site:
+            return
+
+        legacy_site = getattr(prefix, "site", None)
+        if legacy_site == site:
+            return
+
+        if prefix_scope is None and legacy_site is None:
+            raise ValueError(
+                f"Workload prefix {prefix} must be scoped to site '{site}'."
+            )
+
+        raise ValueError(
+            f"Workload prefix {prefix} is scoped to '{prefix_scope or legacy_site}', "
+            f"but selected site is '{site}'."
+        )
+
     def get_pod_vni_base(self, pod_location):
         custom_fields = pod_location.custom_field_data or {}
         pod_vni_base = custom_fields.get("pod_id")
@@ -250,6 +271,7 @@ class GenerateVxlanFabricAddressing(Script):
         l2_vni_base = self.get_pod_vni_base(pod_location)
         self.validate_pod_vni_base(l2_vni_base)
         self.validate_service_id_range(vxlan_serviceid)
+        self.validate_prefix_site_scope(prefix, site)
         values = self.calculate_values(prefix, vxlan_serviceid, l2_vni_base)
         self.validate_unique_l2_values(
             vxlan_serviceid, values["workload_vni"], l2_vni_base, site
