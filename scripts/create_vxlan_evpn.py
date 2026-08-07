@@ -332,8 +332,8 @@ class GenerateVxlanFabricAddressing(Script):
             "vxlan_serviceid": vxlan_serviceid,
             "vrf_name": vrf_name.name if vrf_name else None,
             "vxlan_mcast_group": values["multicast_group"],
-            "workload_VLAN_ID": values["workload_vlan"],
-            "workload_VNI": values["workload_vni"],
+            "workload_vlan": values["workload_vlan"],
+            "workload_vni": values["workload_vni"],
             "workload_subnet": prefix.pk,
             "workload_gateway": values["workload_gateway"],
         }
@@ -350,7 +350,7 @@ class GenerateVxlanFabricAddressing(Script):
                 {
                     "fw_transit_vlan": values["fw_transit_vlan"],
                     "l3_vlan": values["l3_vni_vlan"],
-                    "L3VNI": values["l3_vni"],
+                    "l3_vni": values["l3_vni"],
                 }
             )
 
