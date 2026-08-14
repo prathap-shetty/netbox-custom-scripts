@@ -5,6 +5,7 @@ from dcim.models import Location, Site
 from django.utils.text import slugify
 from extras.scripts import BooleanVar, IntegerVar, ObjectVar, Script, StringVar
 from ipam.models import Prefix, VRF
+from ipam.models.vlans import VLAN
 from vpn.models import L2VPN
 
 
@@ -20,6 +21,7 @@ class GenerateVxlanFabricAddressing(Script):
             "pod_location",
             "vxlan_name",
             "vxlan_serviceid",
+            "workload_vlan",
             "vrf_name",
             "workload_prefix",
             "reuse_l3_vni",
@@ -49,6 +51,13 @@ class GenerateVxlanFabricAddressing(Script):
         label="VXLAN Service ID",
         required=True,
         description="Numeric service identifier from 1000 through 1999.",
+    )
+
+    workload_vlan = ObjectVar(
+        model=VLAN,
+        label="Workload VLAN",
+        required=True,
+        description="Select the workload VLAN from DCIM. This VLAN will be used for the workload subnet and VTEP interfaces.",
     )
 
     vrf_name = ObjectVar(
@@ -262,6 +271,7 @@ class GenerateVxlanFabricAddressing(Script):
         pod_location = data["pod_location"]
         vxlan_name = data["vxlan_name"]
         vxlan_serviceid = data["vxlan_serviceid"]
+        workload_vlan = data["workload_vlan"]
         vrf_name = data["vrf_name"]
         site = data["site"]
         reuse_l3_vni = data.get("reuse_l3_vni")
@@ -321,7 +331,7 @@ class GenerateVxlanFabricAddressing(Script):
             "Subnet": str(network),
             "VRF Name": vrf_name.name if vrf_name else None,
             "Multicast Group": values["multicast_group"],
-            "Workload VLAN": values["workload_vlan"],
+            "Workload VLAN": values["workload_vlan"] if values["workload_vlan"] else None,
             "Workload VNI": values["workload_vni"],
             "Workload Gateway": values["workload_gateway"],
             "Reused L3 VNI/RF": bool(has_vrf and reuse_l3_vni),
@@ -330,9 +340,9 @@ class GenerateVxlanFabricAddressing(Script):
         custom_fields = {
             "pod_id": values["l2_vni_base"],
             "vxlan_serviceid": vxlan_serviceid,
-            "vrf_name": vrf_name.name if vrf_name else None,
+            "vrf_name": vrf_name.pk if vrf_name else None,
             "vxlan_mcast_group": values["multicast_group"],
-            "workload_vlan": values["workload_vlan"],
+            "workload_vlan": workload_vlan.pk,
             "workload_vni": values["workload_vni"],
             "workload_subnet": prefix.pk,
             "workload_gateway": values["workload_gateway"],
