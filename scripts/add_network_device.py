@@ -124,8 +124,12 @@ class CommissionDevice(Script):
 
     # Removed hostname; device name is computed
     device_id = StringVar(
-        label="Device ID (Used in the computed name)",
+        label="Device ID(s) (Used in the computed name)",
         required=True,
+        description=(
+            "Single ID or comma-separated list, e.g. 1,10,20,125. "
+            "One device is created per ID with the same settings."
+        ),
     )
 
     device_type = ObjectVar(
@@ -201,10 +205,12 @@ class CommissionDevice(Script):
         required=False,
         description=(
             "One mapping per line. Format:\n"
-            "  <A_INTERFACE>=<B_DEVICE>:<B_INTERFACE>\n\n"
+            "  <DEVICE_ID>|<A_INTERFACE>=<B_DEVICE>:<B_INTERFACE>\n"
+            "The '<DEVICE_ID>|' prefix selects which new device is the A-side. "
+            "It may be omitted only when a single Device ID is given.\n\n"
             "Examples:\n"
-            "  Ethernet1/1=switch-1:Ethernet1/1\n"
-            "  Ethernet1/10=switch-2:Ethernet1/10\n"
+            "  10|Ethernet1/1=switch-1:Ethernet1/1\n"
+            "  20|Ethernet1/1=switch-1:Ethernet1/2\n"
         ),
     )
 
@@ -370,8 +376,30 @@ class CommissionDevice(Script):
     
         return Prefix.objects.get(id=new.id)    
 
-    def _parse_patch_plan(self, text: str):
-        mappings = []
+    def _parse_device_ids(self, text: str):
+        """
+        Split a comma/whitespace-separated list of device IDs.
+        Order is preserved; duplicates abort the run.
+        """
+        ids = [self._normalize(p) for p in re.split(r"[,\s]+", text or "")]
+        ids = [i for i in ids if i]
+        if not ids:
+            raise AbortScript("Device ID is empty. Provide one ID or a comma-separated list.")
+
+        seen = set()
+        for i in ids:
+            if i in seen:
+                raise AbortScript(f"Device ID '{i}' is listed more than once.")
+            seen.add(i)
+        return ids
+
+    def _parse_patch_plan(self, text: str, device_ids):
+        """
+        Parse patch plan lines into {device_id: [(a_iface, b_device, b_iface), ...]}.
+        Lines may be prefixed with '<DEVICE_ID>|'. Unprefixed lines are only allowed
+        when exactly one device ID is being created.
+        """
+        mappings = {did: [] for did in device_ids}
         if not text:
             return mappings
 
@@ -380,10 +408,27 @@ class CommissionDevice(Script):
             if not line or line.startswith("#"):
                 continue
 
+            if "|" in line:
+                did, line = line.split("|", 1)
+                did = self._normalize(did)
+                line = line.strip()
+                if did not in mappings:
+                    raise AbortScript(
+                        f"Patch plan line {idx} references device ID '{did}', "
+                        f"which is not in the Device ID list ({', '.join(device_ids)})."
+                    )
+            elif len(device_ids) == 1:
+                did = device_ids[0]
+            else:
+                raise AbortScript(
+                    f"Patch plan line {idx} has no '<DEVICE_ID>|' prefix: '{raw}'. "
+                    "A prefix is required when creating multiple devices."
+                )
+
             if "=" not in line or ":" not in line:
                 raise AbortScript(
                     f"Patch plan line {idx} is invalid: '{raw}'. "
-                    "Expected format: <A_INTERFACE>=<B_DEVICE>:<B_INTERFACE>"
+                    "Expected format: [<DEVICE_ID>|]<A_INTERFACE>=<B_DEVICE>:<B_INTERFACE>"
                 )
 
             left, right = line.split("=", 1)
@@ -396,7 +441,7 @@ class CommissionDevice(Script):
             if not a_iface or not b_device or not b_iface:
                 raise AbortScript(f"Patch plan line {idx} has empty values: '{raw}'")
 
-            mappings.append((a_iface, b_device, b_iface))
+            mappings[did].append((a_iface, b_device, b_iface))
 
         return mappings
 
@@ -482,18 +527,13 @@ class CommissionDevice(Script):
         tenant = data["tenant"]  # now required
         device_type = data["device_type"]
         role = data["role"]
-        platform = data.get("platform")
-        status = data["status"]
         network_type = data["network_type"]
         rack = data.get("rack")
-        rack_face = data["rack_face"]
         rack_position = data.get("rack_position")
 
-        device_id = self._normalize(data["device_id"])
+        device_ids = self._parse_device_ids(data["device_id"])
 
-        allocate_all = data["allocate_all_labeled_interfaces"]
         do_cabling = data["create_cables_from_patch_plan"]
-        enforce_site_match = data["enforce_patch_plan_site_match"]
         patch_plan_text = data.get("patch_plan")
 
         # Pre-flight checks
@@ -502,208 +542,246 @@ class CommissionDevice(Script):
                 f"Selected site '{site}' does not belong to region '{region}'."
             )
 
-        # Compute device name
-        composed_name = self._compose_device_name(site, tenant, network_type, role, device_id)
+        if rack and rack.site_id != site.id:
+            raise AbortScript(
+                f"Selected Rack '{rack}' does not belong to Site '{site}'."
+            )
 
-        if Device.objects.filter(name=composed_name).exists():
-            raise AbortScript(f"Device name '{composed_name}' already exists in NetBox.")
+        if rack and rack_position and len(device_ids) > 1:
+            raise AbortScript(
+                "Rack Position can only be set for a single device. "
+                "Leave it blank to auto-place multiple devices."
+            )
+
+        # Compute all device names up front and reject any that already exist
+        names = {
+            did: self._compose_device_name(site, tenant, network_type, role, did)
+            for did in device_ids
+        }
+        existing = list(
+            Device.objects.filter(name__in=names.values()).values_list("name", flat=True)
+        )
+        if existing:
+            raise AbortScript(f"Device name(s) already exist in NetBox: {', '.join(existing)}")
+
+        # Parse patch plan once, grouped by device ID
+        mappings_by_id = {did: [] for did in device_ids}
+        if do_cabling:
+            mappings_by_id = self._parse_patch_plan(patch_plan_text, device_ids)
+            if not any(mappings_by_id.values()):
+                raise AbortScript("Cabling enabled but patch plan is empty. Add at least one mapping line.")
+            for did, maps in mappings_by_id.items():
+                if not maps:
+                    self.log_warning(f"No patch plan lines for device ID '{did}' ({names[did]}); no cables for it.")
 
         # Atomic transaction - any AbortScript or exception will roll back all DB changes
         with transaction.atomic():
             if not commit:
-                self.log_info(
-                    f"[DRY-RUN] Would create device '{composed_name}', rack/place it, allocate IPs (/32 & /31), and optionally create cables."
+                for did in device_ids:
+                    self.log_info(
+                        f"[DRY-RUN] Would create device '{names[did]}' ({device_type}), rack/place it, "
+                        f"allocate IPs (/32 & /31), and create {len(mappings_by_id[did])} cable(s)."
+                    )
+                return f"Dry-run complete for {len(device_ids)} device(s)."
+
+            created = []
+            for did in device_ids:
+                device = self._commission_device(data, names[did], mappings_by_id[did])
+                created.append(device.name)
+
+            return f"Commissioning complete for {len(created)} device(s): {', '.join(created)}."
+
+    def _commission_device(self, data, composed_name: str, mappings) -> Device:
+        site = data["site"]
+        tenant = data["tenant"]
+        device_type = data["device_type"]
+        role = data["role"]
+        platform = data.get("platform")
+        status = data["status"]
+        rack = data.get("rack")
+        rack_face = data["rack_face"]
+        rack_position = data.get("rack_position")
+        enforce_site_match = data["enforce_patch_plan_site_match"]
+
+        # Create device (interfaces from DeviceType templates are instantiated on save)
+        device = Device(
+            name=composed_name,
+            site=site,
+            tenant=tenant,
+            device_type=device_type,
+            role=role,
+            platform=platform,
+            status=status,
+           # asset_tag=composed_name,  # keep device_id as asset_tag as well
+        )
+        device.full_clean()
+        device.save()
+        self.log_success(
+            f"Created device: {device.name} (site={site}, type={device_type}, role={role})"
+        )
+        # Create module bays per device type (if a plan exists)
+        # self._create_module_bays_for_device(device)
+
+        # Optional rack placement
+        if rack:
+            device.rack = rack
+            device.face = rack_face
+
+            if rack_position:
+                device.position = rack_position
+                # Validate explicit placement
+                device.full_clean()
+                device.save()
+                self.log_success(
+                    f"Placed device in rack {rack} face={rack_face} U={rack_position}"
                 )
-                return "Dry-run complete."
+                # self.log_success(
+                #     f"Placed device in rack {rack}  U={rack_position}"
+                #  )
+            else:
+                # Try to auto-place by probing available positions
+                self._auto_place_in_rack(device, rack, rack_face)
 
-            # Create device (interfaces from DeviceType templates are instantiated on save)
-            device = Device(
-                name=composed_name,
-                site=site,
-                tenant=tenant,
-                device_type=device_type,
-                role=role,
-                platform=platform,
-                status=status,
-               # asset_tag=composed_name,  # keep device_id as asset_tag as well
+        # Discover newly-instantiated interfaces
+        interfaces = list(device.interfaces.all())
+        if not interfaces:
+            raise AbortScript(
+                "No interfaces found on device after creation. "
+                "Check that the Device Type has interface templates defined."
             )
-            device.full_clean()
-            device.save()
-            self.log_success(
-                f"Created device: {device.name} (site={site}, type={device_type}, role={role})"
-            )
-            # Create module bays per device type (if a plan exists)
-            # self._create_module_bays_for_device(device)
 
-            # Optional rack placement
-            if rack:
-                if rack.site_id != site.id:
-                    raise AbortScript(
-                        f"Selected Rack '{rack}' does not belong to Site '{site}'."
-                    )
+        single_ip_labels = set(self.SINGLE_IP_LABELS)
+        subnet_31_labels = set(self.SUBNET_31_LABELS)
 
-                device.rack = rack
-                device.face = rack_face
+        ifaces_processed = 0
+        mgmt_ip_obj = None
 
-                if rack_position:
-                    device.position = rack_position
-                    # Validate explicit placement
-                    device.full_clean()
-                    device.save()
-                    self.log_success(
-                        f"Placed device in rack {rack} face={rack_face} U={rack_position}"
-                    )
-                    # self.log_success(
-                    #     f"Placed device in rack {rack}  U={rack_position}"
-                    #  )
-                else:
-                    # Try to auto-place by probing available positions
-                    self._auto_place_in_rack(device,rack_face, rack)
-
-            # Discover newly-instantiated interfaces
-            interfaces = list(device.interfaces.all())
-            if not interfaces:
-                raise AbortScript(
-                    "No interfaces found on device after creation. "
-                    "Check that the Device Type has interface templates defined."
-                )
-
-            single_ip_labels = set(self.SINGLE_IP_LABELS)
-            subnet_31_labels = set(self.SUBNET_31_LABELS)
-
-            ifaces_processed = 0
-            mgmt_ip_obj = None
-
-            for iface in interfaces:
-                label = self._normalize(getattr(iface, "label", None))
-                if not label:
-                    # Ignore unlabeled interfaces
-                    continue
-
-                # /32 IP allocation for label-tag-matched prefixes
-                if label in single_ip_labels:
-                    parent = self._find_site_prefix_by_tag(site, label)
-                    addr = self._allocate_next_ip(parent)
-
-                    ip_obj = IPAddress(
-                        address=addr,
-                        vrf=parent.vrf,
-                        tenant=tenant or parent.tenant,
-                        status=IPAddressStatusChoices.STATUS_ACTIVE,
-                        assigned_object=iface,
-                    )
-                    ip_obj.full_clean()
-                    ip_obj.save()
-
-                    self.log_success(
-                        f"Assigned {ip_obj.address} to {device.name}/{iface.name} (label={label}, parent={parent.prefix})"
-                    )
-
-                    if label == self.MGMT_LABEL:
-                        mgmt_ip_obj = ip_obj
-
-                    ifaces_processed += 1
-                    continue
-
-                # /31 allocation for label-tag-matched uplinks
-                if label in subnet_31_labels:
-                    parent = self._find_site_prefix_by_tag(site, label)
-                    child = self._allocate_next_child_31(parent)
-                    addr2 = self._allocate_next_ip(child)
-                    # First usable IP from the /31 (network + 1)
-                    net = ipaddress.ip_network(str(child.prefix))
-                    hosts = list(net.hosts())
-                    if len(hosts) < 1:
-                        raise AbortScript(f"Allocated /31 {child.prefix} has no usable host IPs.")
-
-                    first_ip = str(hosts[0])
-
-                    ip_obj = IPAddress(
-                        address=addr2,
-                        vrf=child.vrf,
-                        tenant=tenant or child.tenant,
-                        status=IPAddressStatusChoices.STATUS_ACTIVE,
-                        assigned_object=iface,
-                    )
-                    ip_obj.full_clean()
-                    ip_obj.save()
-
-                    self.log_success(
-                        f"Allocated {child.prefix} under {parent.prefix} and assigned {first_ip} to {device.name}/{iface.name} (label={label})"
-                    )
-
-                    ifaces_processed += 1
-                    continue
-
-                # Not a target label -> ignore
+        for iface in interfaces:
+            label = self._normalize(getattr(iface, "label", None))
+            if not label:
+                # Ignore unlabeled interfaces
                 continue
 
-            # Primary IPv4 = oob-mgmt IP
-            if mgmt_ip_obj:
-                device.primary_ip4 = mgmt_ip_obj
-                device.save()
-                self.log_success(f"Set primary IPv4 for {device.name} to {mgmt_ip_obj.address}")
-            else:
-                self.log_warning(
-                    f"No '{self.MGMT_LABEL}' interface allocated; primary IPv4 not set."
+            # /32 IP allocation for label-tag-matched prefixes
+            if label in single_ip_labels:
+                parent = self._find_site_prefix_by_tag(site, label)
+                addr = self._allocate_next_ip(parent)
+
+                ip_obj = IPAddress(
+                    address=addr,
+                    vrf=parent.vrf,
+                    tenant=tenant or parent.tenant,
+                    status=IPAddressStatusChoices.STATUS_ACTIVE,
+                    assigned_object=iface,
+                )
+                ip_obj.full_clean()
+                ip_obj.save()
+
+                self.log_success(
+                    f"Assigned {ip_obj.address} to {device.name}/{iface.name} (label={label}, parent={parent.prefix})"
                 )
 
-            if ifaces_processed == 0:
-                self.log_warning(
-                    "No interfaces matched the requested label policies. "
-                    "Labels expected for allocation: "
-                    f"{', '.join(sorted(single_ip_labels | subnet_31_labels))}"
+                if label == self.MGMT_LABEL:
+                    mgmt_ip_obj = ip_obj
+
+                ifaces_processed += 1
+                continue
+
+            # /31 allocation for label-tag-matched uplinks
+            if label in subnet_31_labels:
+                parent = self._find_site_prefix_by_tag(site, label)
+                child = self._allocate_next_child_31(parent)
+                addr2 = self._allocate_next_ip(child)
+                # First usable IP from the /31 (network + 1)
+                net = ipaddress.ip_network(str(child.prefix))
+                hosts = list(net.hosts())
+                if len(hosts) < 1:
+                    raise AbortScript(f"Allocated /31 {child.prefix} has no usable host IPs.")
+
+                first_ip = str(hosts[0])
+
+                ip_obj = IPAddress(
+                    address=addr2,
+                    vrf=child.vrf,
+                    tenant=tenant or child.tenant,
+                    status=IPAddressStatusChoices.STATUS_ACTIVE,
+                    assigned_object=iface,
+                )
+                ip_obj.full_clean()
+                ip_obj.save()
+
+                self.log_success(
+                    f"Allocated {child.prefix} under {parent.prefix} and assigned {first_ip} to {device.name}/{iface.name} (label={label})"
                 )
 
-            # Optional cabling via patch plan
-            if do_cabling:
-                mappings = self._parse_patch_plan(patch_plan_text)
-                if not mappings:
-                    raise AbortScript("Cabling enabled but patch plan is empty. Add at least one mapping line.")
+                ifaces_processed += 1
+                continue
 
-                a_if_by_name = {i.name: i for i in device.interfaces.all()}
+            # Not a target label -> ignore
+            continue
 
-                for a_name, b_dev_name, b_if_name in mappings:
-                    a_iface = a_if_by_name.get(a_name)
-                    if not a_iface:
-                        raise AbortScript(
-                            f"A-side interface '{a_name}' not found on new device '{device.name}'. "
-                            "Check the interface name matches exactly in NetBox."
-                        )
+        # Primary IPv4 = oob-mgmt IP
+        if mgmt_ip_obj:
+            device.primary_ip4 = mgmt_ip_obj
+            device.save()
+            self.log_success(f"Set primary IPv4 for {device.name} to {mgmt_ip_obj.address}")
+        else:
+            self.log_warning(
+                f"No '{self.MGMT_LABEL}' interface allocated; primary IPv4 not set."
+            )
 
-                    b_dev = Device.objects.filter(name=b_dev_name).first()
-                    if not b_dev:
-                        raise AbortScript(f"B-side device '{b_dev_name}' not found in NetBox.")
+        if ifaces_processed == 0:
+            self.log_warning(
+                "No interfaces matched the requested label policies. "
+                "Labels expected for allocation: "
+                f"{', '.join(sorted(single_ip_labels | subnet_31_labels))}"
+            )
 
-                    if enforce_site_match and b_dev.site_id != site.id:
-                        raise AbortScript(
-                            f"B-side device '{b_dev.name}' is in site '{b_dev.site}', not '{site}'."
-                        )
+        # Optional cabling via patch plan (mappings already filtered to this device)
+        if mappings:
+            a_if_by_name = {i.name: i for i in device.interfaces.all()}
 
-                    b_iface = Interface.objects.filter(device=b_dev, name=b_if_name).first()
-                    if not b_iface:
-                        raise AbortScript(
-                            f"B-side interface '{b_if_name}' not found on device '{b_dev.name}'. "
-                            "Check interface name matches exactly in NetBox."
-                        )
-
-                    a_label = self._normalize(getattr(a_iface, "label", None))
-
-                    # Update descriptions/enabled flags on both sides (before cabling)
-                    self._set_iface_desc_and_enable(
-                        iface=b_iface,
-                        device_name=a_iface.device.name,
-                        port_name=a_iface.name,
-                        label=a_label,
-                    )
-                    self._set_iface_desc_and_enable(
-                        iface=a_iface,
-                        device_name=b_iface.device.name,
-                        port_name=b_iface.name,
-                        label=a_label,
+            for a_name, b_dev_name, b_if_name in mappings:
+                a_iface = a_if_by_name.get(a_name)
+                if not a_iface:
+                    raise AbortScript(
+                        f"A-side interface '{a_name}' not found on new device '{device.name}'. "
+                        "Check the interface name matches exactly in NetBox."
                     )
 
-                    # Create cable (raises if any side in-use)
-                    self._create_cable(a_iface, b_iface)
+                b_dev = Device.objects.filter(name=b_dev_name).first()
+                if not b_dev:
+                    raise AbortScript(f"B-side device '{b_dev_name}' not found in NetBox.")
 
-            return f"Commissioning complete for {device.name}."
+                if enforce_site_match and b_dev.site_id != site.id:
+                    raise AbortScript(
+                        f"B-side device '{b_dev.name}' is in site '{b_dev.site}', not '{site}'."
+                    )
+
+                b_iface = Interface.objects.filter(device=b_dev, name=b_if_name).first()
+                if not b_iface:
+                    raise AbortScript(
+                        f"B-side interface '{b_if_name}' not found on device '{b_dev.name}'. "
+                        "Check interface name matches exactly in NetBox."
+                    )
+
+                a_label = self._normalize(getattr(a_iface, "label", None))
+
+                # Update descriptions/enabled flags on both sides (before cabling)
+                self._set_iface_desc_and_enable(
+                    iface=b_iface,
+                    device_name=a_iface.device.name,
+                    port_name=a_iface.name,
+                    label=a_label,
+                )
+                self._set_iface_desc_and_enable(
+                    iface=a_iface,
+                    device_name=b_iface.device.name,
+                    port_name=b_iface.name,
+                    label=a_label,
+                )
+
+                # Create cable (raises if any side in-use)
+                self._create_cable(a_iface, b_iface)
+
+        return device
