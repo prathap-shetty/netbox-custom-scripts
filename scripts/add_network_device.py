@@ -236,6 +236,13 @@ class CommissionDevice(Script):
 
     MGMT_LABEL = "oob-mgmt"
 
+    # Labels whose IP is stored as a host route (/32) instead of the parent prefix length
+    HOST_ROUTE_LABELS = {
+        "loopback0",
+        "loopback1",
+        "loopback2",
+    }
+
     #
     # --- Helpers ---
     #
@@ -666,6 +673,9 @@ class CommissionDevice(Script):
             if label in single_ip_labels:
                 parent = self._find_site_prefix_by_tag(site, label)
                 addr = self._allocate_next_ip(parent)
+                if label in self.HOST_ROUTE_LABELS:
+                    # Loopbacks get a /32; oob-mgmt keeps the parent prefix length
+                    addr = f"{addr.split('/')[0]}/32"
 
                 ip_obj = IPAddress(
                     address=addr,
