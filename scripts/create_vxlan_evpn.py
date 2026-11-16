@@ -126,7 +126,7 @@ class GenerateVxlanFabricAddressing(Script):
         custom_fields = existing_l3_vni.custom_field_data or {}
         missing_fields = [
             field
-            for field in ("L3VNI", "l3_vlan", "fw_transit_vlan")
+            for field in ("l3_vni", "l3_vlan")
             if custom_fields.get(field) in (None, "")
         ]
 
@@ -142,10 +142,17 @@ class GenerateVxlanFabricAddressing(Script):
                 f"select a source with pod base {l2_vni_base}."
             )
 
+        # ext_transit_vlan is an object custom field (VLAN pk); it may be empty on the source
+        transit_vlan = None
+        transit_vlan_pk = custom_fields.get("ext_transit_vlan")
+        if transit_vlan_pk:
+            transit_vlan = VLAN.objects.filter(pk=transit_vlan_pk).first()
+
         return {
-            "l3_vni": custom_fields["L3VNI"],
+            "l3_vni": custom_fields["l3_vni"],
             "l3_vni_vlan": custom_fields["l3_vlan"],
-            "fw_transit_vlan": custom_fields["fw_transit_vlan"],
+            "fw_transit_vlan": transit_vlan.vid if transit_vlan else None,
+            "transit_vlan_obj": transit_vlan,
         }
 
     def validate_unique_l2_values(self, service_id, l2_vni, l2_vni_base, site):
@@ -157,7 +164,7 @@ class GenerateVxlanFabricAddressing(Script):
             )
 
         workload_vni_conflict = L2VPN.objects.filter(
-            custom_field_data__workload_VNI=l2_vni
+            custom_field_data__workload_vni=l2_vni
         ).first()
         if workload_vni_conflict:
             raise ValueError(
@@ -221,12 +228,37 @@ class GenerateVxlanFabricAddressing(Script):
                 "Pod location pod_id must be aligned to a 10000 boundary, e.g. 1010000."
             )
 
-    def add_new_l3_values(self, values):
+    def find_transit_vlan(self, vid, workload_vlan):
+        """
+        Find the VLAN object for the FW transit VLAN ID. Prefers the workload VLAN's
+        group, then its site, then any VLAN with that VID. Returns None if not found.
+        """
+        qs = VLAN.objects.filter(vid=vid)
+        if workload_vlan.group_id:
+            match = qs.filter(group_id=workload_vlan.group_id).first()
+            if match:
+                return match
+        if workload_vlan.site_id:
+            match = qs.filter(site_id=workload_vlan.site_id).first()
+            if match:
+                return match
+        if qs.count() == 1:
+            return qs.first()
+        return None
+
+    def add_new_l3_values(self, values, workload_vlan):
+        transit_vlan = self.find_transit_vlan(values["new_fw_transit_vlan"], workload_vlan)
+        if not transit_vlan:
+            self.log_warning(
+                f"FW transit VLAN {values['new_fw_transit_vlan']} not found in NetBox; "
+                "ext_transit_vlan will be left empty. Create the VLAN and set it on the L2VPN."
+            )
         values.update(
             {
                 "l3_vni": values["new_l3_vni"],
                 "l3_vni_vlan": values["new_l3_vni_vlan"],
                 "fw_transit_vlan": values["new_fw_transit_vlan"],
+                "transit_vlan_obj": transit_vlan,
             }
         )
 
@@ -302,7 +334,7 @@ class GenerateVxlanFabricAddressing(Script):
                 f"and FW Transit VLAN {values['fw_transit_vlan']}"
             )
         elif has_vrf:
-            self.add_new_l3_values(values)
+            self.add_new_l3_values(values, workload_vlan)
 
         network = values["network"]
 
@@ -358,7 +390,9 @@ class GenerateVxlanFabricAddressing(Script):
             )
             custom_fields.update(
                 {
-                    "fw_transit_vlan": values["fw_transit_vlan"],
+                    "ext_transit_vlan": (
+                        values["transit_vlan_obj"].pk if values["transit_vlan_obj"] else None
+                    ),
                     "l3_vlan": values["l3_vni_vlan"],
                     "l3_vni": values["l3_vni"],
                 }
