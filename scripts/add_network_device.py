@@ -34,6 +34,7 @@ from ipam.choices import IPAddressStatusChoices
 from tenancy.models import Tenant
 
 import ipaddress
+from decimal import Decimal, InvalidOperation
 import re
 import os
 import pynetbox
@@ -162,6 +163,7 @@ class CommissionDevice(Script):
         model=Rack,
         label="Rack (optional; filtered by Site)",
         required=False,
+        description="Default rack. Per-device racks can be set in Rack Position(s) as RACK:U.",
         query_params={"site_id": "$site"},
     )
 
@@ -172,12 +174,15 @@ class CommissionDevice(Script):
         required=True,
     )
 
-    rack_position = IntegerVar(
-        label="Rack Position (U; optional)",
+    rack_position = StringVar(
+        label="Rack Position(s) (U; optional)",
         required=False,
         description=(
-            "If provided, it must be available (and contiguous for device height). "
-            "If left blank, the script will auto-place at the first valid contiguous space."
+            "One entry per Device ID, comma-separated in the same order. Each entry is one of: "
+            "'40' (U40 in the default Rack), 'RACK02:40' (U40 in rack RACK02), "
+            "'RACK02:' (auto-place in RACK02), or blank (auto-place in the default Rack, "
+            "or no rack if none is selected). Example: RACK01:40,RACK02:40,,RACK03:. "
+            "Leave the whole field blank to auto-place all in the default Rack."
         ),
     )
 
@@ -501,14 +506,82 @@ class CommissionDevice(Script):
             f"Updated {iface.device.name}:{iface.name} (enabled=True, description='{desc}')"
         )
 
-    def _auto_place_in_rack(self, device: Device, rack: Rack, face: str) -> None:
+    def _parse_rack_positions(self, text: str, device_ids, site: Site, default_rack):
+        """
+        Parse comma-separated placement entries into {device_id: (rack or None, Decimal or None)}.
+        Entry forms: '' | 'U' | 'RACK:U' | 'RACK:'. Racks are looked up by name in `site`.
+        Blank field -> every device goes to (default_rack, auto).
+        """
+        placements = {did: (default_rack, None) for did in device_ids}
+        text = (text or "").strip()
+        if not text:
+            return placements
+
+        parts = [p.strip() for p in text.split(",")]
+        if len(parts) != len(device_ids):
+            raise AbortScript(
+                f"Rack Position has {len(parts)} entries but {len(device_ids)} Device ID(s) were given. "
+                "Provide one entry per Device ID (blank entry = auto-place)."
+            )
+
+        rack_cache = {}
+        seen = {}
+        for did, part in zip(device_ids, parts):
+            rack, pos_text = default_rack, part
+            if ":" in part:
+                rack_name, pos_text = (x.strip() for x in part.rsplit(":", 1))
+                if rack_name not in rack_cache:
+                    matches = list(Rack.objects.filter(site=site, name=rack_name))
+                    if not matches:
+                        raise AbortScript(f"Rack '{rack_name}' (device ID '{did}') not found in site '{site}'.")
+                    if len(matches) > 1:
+                        raise AbortScript(
+                            f"Rack name '{rack_name}' (device ID '{did}') matches {len(matches)} racks in "
+                            f"site '{site}'; rack names must be unique within the site to use RACK:U."
+                        )
+                    rack_cache[rack_name] = matches[0]
+                rack = rack_cache[rack_name]
+
+            if not pos_text:
+                placements[did] = (rack, None)
+                continue
+
+            try:
+                pos = Decimal(pos_text)
+            except InvalidOperation:
+                raise AbortScript(
+                    f"Rack Position '{part}' for device ID '{did}' is invalid. "
+                    "Use U, RACK:U, RACK: or leave blank."
+                )
+            if pos <= 0 or pos % Decimal("0.5") != 0:
+                raise AbortScript(
+                    f"Rack Position '{part}' for device ID '{did}' must be a positive whole or half U."
+                )
+            if rack is None:
+                raise AbortScript(
+                    f"Rack Position '{part}' for device ID '{did}' has no rack. "
+                    "Select a default Rack or use RACK:U."
+                )
+            key = (rack.pk, pos)
+            if key in seen:
+                raise AbortScript(
+                    f"{rack} U{pos_text} is given for both device ID '{seen[key]}' and '{did}'."
+                )
+            seen[key] = did
+            placements[did] = (rack, pos)
+        return placements
+
+    def _auto_place_in_rack(self, device: Device, rack: Rack, face: str, reserved=()) -> None:
         """
         Attempt to place `device` into `rack` automatically by probing valid positions.
         This doesn't rely on Rack.get_available_units(); it tries positions top-down until
         device.full_clean() passes. Raises AbortScript if no contiguous space is found.
+        `reserved` holds U positions claimed by devices later in this run; they are skipped.
         """
         height = device.device_type.u_height or 1
         for pos in range(rack.u_height, 0, -1):
+            if any(pos <= r < pos + height for r in reserved):
+                continue
             device.rack = rack
             device.face = face
             device.position = pos
@@ -554,11 +627,15 @@ class CommissionDevice(Script):
                 f"Selected Rack '{rack}' does not belong to Site '{site}'."
             )
 
-        if rack and rack_position and len(device_ids) > 1:
-            raise AbortScript(
-                "Rack Position can only be set for a single device. "
-                "Leave it blank to auto-place multiple devices."
-            )
+        placements = self._parse_rack_positions(rack_position, device_ids, site, rack)
+
+        # (rack, U) units claimed by explicit positions, so auto-placed devices don't take them
+        height = device_type.u_height or 1
+        units_by_id = {
+            did: [(r.pk, pos + i) for i in range(int(height) or 1)]
+            for did, (r, pos) in placements.items()
+            if pos is not None
+        }
 
         # Compute all device names up front and reject any that already exist
         names = {
@@ -585,29 +662,45 @@ class CommissionDevice(Script):
         with transaction.atomic():
             if not commit:
                 for did in device_ids:
+                    p_rack, p_pos = placements[did]
+                    placement = (
+                        "no rack" if not p_rack
+                        else f"{p_rack} U={p_pos}" if p_pos is not None
+                        else f"{p_rack} auto-place"
+                    )
                     self.log_info(
-                        f"[DRY-RUN] Would create device '{names[did]}' ({device_type}), rack/place it, "
+                        f"[DRY-RUN] Would create device '{names[did]}' ({device_type}), place it ({placement}), "
                         f"allocate IPs (/32 & /31), and create {len(mappings_by_id[did])} cable(s)."
                     )
                 return f"Dry-run complete for {len(device_ids)} device(s)."
 
             created = []
-            for did in device_ids:
-                device = self._commission_device(data, names[did], mappings_by_id[did])
+            for idx, did in enumerate(device_ids):
+                p_rack, p_pos = placements[did]
+                # Units in this device's rack reserved by explicitly-positioned devices not yet created
+                reserved = [
+                    u
+                    for later in device_ids[idx + 1:]
+                    for (r_pk, u) in units_by_id.get(later, [])
+                    if p_rack and r_pk == p_rack.pk
+                ]
+                device = self._commission_device(
+                    data, names[did], mappings_by_id[did], p_rack, p_pos, reserved
+                )
                 created.append(device.name)
 
             return f"Commissioning complete for {len(created)} device(s): {', '.join(created)}."
 
-    def _commission_device(self, data, composed_name: str, mappings) -> Device:
+    def _commission_device(
+        self, data, composed_name: str, mappings, rack=None, rack_position=None, reserved=()
+    ) -> Device:
         site = data["site"]
         tenant = data["tenant"]
         device_type = data["device_type"]
         role = data["role"]
         platform = data.get("platform")
         status = data["status"]
-        rack = data.get("rack")
         rack_face = data["rack_face"]
-        rack_position = data.get("rack_position")
         enforce_site_match = data["enforce_patch_plan_site_match"]
 
         # Create device (interfaces from DeviceType templates are instantiated on save)
@@ -634,10 +727,16 @@ class CommissionDevice(Script):
             device.rack = rack
             device.face = rack_face
 
-            if rack_position:
+            if rack_position is not None:
                 device.position = rack_position
                 # Validate explicit placement
-                device.full_clean()
+                try:
+                    device.full_clean()
+                except ValidationError as e:
+                    raise AbortScript(
+                        f"Cannot place {device.name} in rack {rack} face={rack_face} U={rack_position}: "
+                        f"{'; '.join(e.messages)}"
+                    )
                 device.save()
                 self.log_success(
                     f"Placed device in rack {rack} face={rack_face} U={rack_position}"
@@ -647,7 +746,7 @@ class CommissionDevice(Script):
                 #  )
             else:
                 # Try to auto-place by probing available positions
-                self._auto_place_in_rack(device, rack, rack_face)
+                self._auto_place_in_rack(device, rack, rack_face, reserved)
 
         # Discover newly-instantiated interfaces
         interfaces = list(device.interfaces.all())
