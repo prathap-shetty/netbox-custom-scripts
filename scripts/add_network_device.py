@@ -34,6 +34,7 @@ from ipam.choices import IPAddressStatusChoices
 from tenancy.models import Tenant
 
 import ipaddress
+import netaddr
 from decimal import Decimal, InvalidOperation
 import re
 import os
@@ -88,6 +89,7 @@ class CommissionDevice(Script):
             "rack_face",
             "rack_position",
             "allocate_all_labeled_interfaces",
+            "align_host_octet",
             "create_cables_from_patch_plan",
             "enforce_patch_plan_site_match",
             "patch_plan",
@@ -191,6 +193,17 @@ class CommissionDevice(Script):
         label="Allocate IPs for all relevant labeled interfaces",
         default=True,
         required=True,
+    )
+
+    align_host_octet = BooleanVar(
+        label="Use the same last octet for mgmt and loopback IPs",
+        default=True,
+        required=False,
+        description=(
+            "Give oob-mgmt and loopback0/1/2 the same host part, e.g. mgmt x.x.x.10 -> "
+            "loopback0 y.y.y.10. Uses the lowest host number that is free in all of those "
+            "prefixes. Untick to take the next free IP in each prefix independently."
+        ),
     )
 
     create_cables_from_patch_plan = BooleanVar(
@@ -325,6 +338,25 @@ class CommissionDevice(Script):
         candidates = list(qs)
         candidates.sort(key=lambda p: (p.prefix.prefixlen, str(p.prefix)), reverse=True)
         return candidates[0]
+
+    def _find_common_host_offset(self, prefixes):
+        """
+        Return the lowest host offset (IP minus network address) that is available in
+        every prefix, or None. For /24 prefixes the offset equals the last octet.
+        """
+        available = [(p, p.get_available_ips()) for p in prefixes]
+        smallest = min(p.prefix.size for p in prefixes)
+        for offset in range(smallest):
+            if all(
+                netaddr.IPAddress(p.prefix.first + offset, p.prefix.version) in avail
+                for p, avail in available
+            ):
+                return offset
+        return None
+
+    def _ip_at_offset(self, prefix: Prefix, offset: int) -> str:
+        ip = netaddr.IPAddress(prefix.prefix.first + offset, prefix.prefix.version)
+        return f"{ip}/{prefix.prefix.prefixlen}"
 
     def _allocate_next_ip(self, prefix: Prefix) -> str:
         ip = prefix.get_first_available_ip()
@@ -762,6 +794,31 @@ class CommissionDevice(Script):
         ifaces_processed = 0
         mgmt_ip_obj = None
 
+        # Optionally pick one host offset that is free in every single-IP prefix
+        host_offset = None
+        if data.get("align_host_octet", True):
+            labels = [
+                self._normalize(getattr(i, "label", None))
+                for i in interfaces
+                if self._normalize(getattr(i, "label", None)) in single_ip_labels
+            ]
+            duplicates = sorted({l for l in labels if labels.count(l) > 1})
+            if duplicates:
+                raise AbortScript(
+                    f"{device.name}: label(s) {', '.join(duplicates)} used on more than one interface; "
+                    "cannot use the same last octet. Untick 'Use the same last octet' or fix the labels."
+                )
+            if labels:
+                parents = {l: self._find_site_prefix_by_tag(site, l) for l in labels}
+                host_offset = self._find_common_host_offset(list(parents.values()))
+                if host_offset is None:
+                    raise AbortScript(
+                        f"{device.name}: no host number is free in all of "
+                        f"{', '.join(str(p.prefix) for p in parents.values())}. "
+                        "Untick 'Use the same last octet' to allocate independently."
+                    )
+                self.log_info(f"{device.name}: using host number .{host_offset} for {', '.join(sorted(labels))}")
+
         for iface in interfaces:
             label = self._normalize(getattr(iface, "label", None))
             if not label:
@@ -771,7 +828,10 @@ class CommissionDevice(Script):
             # /32 IP allocation for label-tag-matched prefixes
             if label in single_ip_labels:
                 parent = self._find_site_prefix_by_tag(site, label)
-                addr = self._allocate_next_ip(parent)
+                if host_offset is not None:
+                    addr = self._ip_at_offset(parent, host_offset)
+                else:
+                    addr = self._allocate_next_ip(parent)
                 if label in self.HOST_ROUTE_LABELS:
                     # Loopbacks get a /32; oob-mgmt keeps the parent prefix length
                     addr = f"{addr.split('/')[0]}/32"
